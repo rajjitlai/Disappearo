@@ -1,26 +1,25 @@
-'use client';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-
+"use client";
+import Link from 'next/link';
+import { useAuth } from '@/app/state/AuthContext';
+import { useEffect } from 'react';
 
 export default function Home() {
-  const [roomId, setRoomId] = useState('general');
-  const router = useRouter();
+  const { user, loading } = useAuth();
+  useEffect(() => {
+    if (!loading && user) {
+      window.location.replace('/dashboard');
+    }
+  }, [loading, user]);
   return (
-    <div className="min-h-dvh grid place-items-center p-6">
-      <div className="w-full max-w-md rounded-2xl border p-6 space-y-4">
-        <h1 className="text-2xl font-bold">Realtime Chat</h1>
-        <input
-          className="w-full rounded-2xl border px-4 py-3"
-          value={roomId}
-          onChange={(e) => setRoomId(e.target.value)}
-          placeholder="room id"
-        />
-        <button
-          onClick={() => router.push(`/chat/${encodeURIComponent(roomId || 'general')}`)}
-          className="w-full rounded-2xl bg-blue-600 text-white py-3"
-        >Enter room</button>
+    <main className="min-h-dvh grid place-items-center">
+      <div className="p-6 text-center">
+        <h1 className="text-2xl font-semibold">Disappearo</h1>
+        <p className="text-gray-600 mt-2">Ephemeral chat, safely.</p>
+        <div className="mt-4 space-x-3">
+          <Link href="/login" className="underline">Login</Link>
+          <Link href="/dashboard" className="underline">Dashboard</Link>
+        </div>
       </div>
-    </div>
+    </main>
   );
 }

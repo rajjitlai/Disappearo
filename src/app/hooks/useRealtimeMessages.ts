@@ -1,25 +1,34 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { client, ids, listMessages, ChatMessage } from '@/app/lib/appwrite';
+import { client, ids, listMessages } from '@/app/lib/appwrite';
 
 
-export function useRealtimeMessages(roomId: string) {
-    const [messages, setMessages] = useState<ChatMessage[]>([]);
+type MessageDoc = {
+    $id: string;
+    sessionId: string;
+    sender: string;
+    text: string;
+};
+
+export function useRealtimeMessages(sessionId: string) {
+    const [messages, setMessages] = useState<MessageDoc[]>([]);
 
     useEffect(() => {
         let unsubscribe: (() => void) | null = null;
 
 
         const run = async () => {
-            const initial = await listMessages(roomId);
-            setMessages(initial);
+            const initial = await listMessages(sessionId);
+            // listMessages returns a document list; normalize to array of docs
+            // @ts-expect-error runtime shape from Appwrite SDK
+            setMessages(initial.documents ?? initial);
 
 
             const sub = client.subscribe(
-                `databases.${ids.db}.collections.${ids.col}.documents`,
+                `databases.${ids.db}.collections.${ids.messages}.documents`,
                 (event) => {
-                    const payload = event.payload as ChatMessage;
-                    if (payload.roomId !== roomId) return;
+                    const payload = event.payload as MessageDoc;
+                    if (payload.sessionId !== sessionId) return;
 
 
                     if (event.events.some(e => e.endsWith('.create'))) {
@@ -43,7 +52,7 @@ export function useRealtimeMessages(roomId: string) {
         return () => {
             if (unsubscribe) unsubscribe();
         };
-    }, [roomId]);
+    }, [sessionId]);
 
 
     return { messages, setMessages };
