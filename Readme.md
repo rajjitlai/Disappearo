@@ -1,12 +1,12 @@
 # Disappearo
 
-Disappearo, an Ephemeral, privacy-first chat built on Next.js 15, React 19, Tailwind v4, and Appwrite.
+Ephemeral, privacy-first chat built on Next.js 15, React 19, Tailwind v4, and Appwrite.
 
 ## Features
 
 - Magic link auth (Appwrite)
 - Ephemeral chat sessions (5 minutes inactivity expiry)
-- Dual-approval exports (JSON / TXT)
+- Dual-approval exports (JSON + TXT)
 - Inline editing (5 minutes, own messages)
 - Image messages (Appwrite Storage) without download exposure
 - Realtime (Appwrite Realtime)
@@ -53,4 +53,6 @@ npm run dev
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

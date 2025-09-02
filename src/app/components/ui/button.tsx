@@ -11,11 +11,11 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 export function Button({ className, variant = 'default', size = 'md', ...props }: ButtonProps) {
     const base = 'inline-flex items-center justify-center rounded-lg font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none';
     const variants: Record<string, string> = {
-        default: 'bg-indigo-600 text-white hover:bg-indigo-500 focus-visible:ring-indigo-600',
-        secondary: 'bg-gray-100 text-gray-900 hover:bg-gray-200 focus-visible:ring-gray-400',
-        destructive: 'bg-red-600 text-white hover:bg-red-500 focus-visible:ring-red-600',
-        ghost: 'bg-transparent hover:bg-gray-100 text-gray-900',
-        link: 'bg-transparent underline-offset-4 hover:underline text-indigo-600'
+        default: 'bg-blue-600 dark:bg-blue-700 text-white hover:bg-blue-700 dark:hover:bg-blue-800 focus-visible:ring-blue-600 dark:focus-visible:ring-blue-500',
+        secondary: 'bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:bg-[var(--muted)] focus-visible:ring-[var(--muted-foreground)]',
+        destructive: 'bg-red-600 dark:bg-red-700 text-white hover:bg-red-700 dark:hover:bg-red-800 focus-visible:ring-red-600 dark:focus-visible:ring-red-500',
+        ghost: 'bg-transparent hover:bg-[var(--muted)] text-[var(--foreground)]',
+        link: 'bg-transparent underline-offset-4 hover:underline text-blue-600 dark:text-blue-400'
     };
     const sizes: Record<string, string> = {
         sm: 'h-8 px-3 text-sm',

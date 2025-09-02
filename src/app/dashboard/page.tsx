@@ -1,13 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { getCurrentUser, logout, getOrCreateProfile, ids, databases, client } from '@/app/lib/appwrite';
+import { useEffect, useState } from 'react';
+import { getCurrentUser, logout, getOrCreateProfile, ids, databases, client, clearAllChatRequests, getProfileWithUnbanCheck } from '@/app/lib/appwrite';
 import { useAuth } from '@/app/state/AuthContext';
 import { useRouter } from 'next/navigation';
-import { ID, Query } from 'appwrite';
+import { ID, Query, Models } from 'appwrite';
+import toast from 'react-hot-toast';
 
 type UserLike = { $id: string; name?: string; email?: string } | null;
-type ProfileDoc = { $id: string; handle: string } | null;
+type ProfileDoc = {
+    $id: string;
+    handle: string;
+    strikes?: number;
+    banned?: boolean;
+    bannedAt?: string;
+    lastStrikeAt?: string;
+} | null;
 type ChatRequestDoc = {
     $id: string;
     fromId: string;
@@ -15,10 +23,9 @@ type ChatRequestDoc = {
     status: 'pending' | 'accepted' | 'declined' | 'cancelled';
     expiresAt?: string;
 };
-type SessionDoc = { $id: string; participants: string[] };
 
 export default function DashboardPage() {
-    const { user: authUser, loading: authLoading } = useAuth();
+    const { loading: authLoading } = useAuth();
     const [user, setUser] = useState<UserLike>(null);
     const [profile, setProfile] = useState<ProfileDoc>(null);
     const [loading, setLoading] = useState(true);
@@ -47,21 +54,85 @@ export default function DashboardPage() {
 
     // load current user + profile
     useEffect(() => {
-        (async () => {
-            if (authLoading) return;
-            const u = await getCurrentUser();
-            if (!u) {
-                router.replace('/login');
+        let isMounted = true;
+
+        const loadUserAndProfile = async () => {
+            try {
+                if (authLoading) return;
+
+                const u = await getCurrentUser();
+                if (!u) {
+                    if (isMounted) {
+                        router.replace('/login');
+                    }
+                    return;
+                }
+
+                if (isMounted) {
+                    setUser(u as unknown as UserLike);
+                }
+
+                const p = await getOrCreateProfile(u as Models.User<Models.Preferences>);
+                if (isMounted) {
+                    setProfile(p as unknown as ProfileDoc);
+
+                    // Check for auto-unban and show notification if unbanned
+                    if (p) {
+                        const unbanResult = await getProfileWithUnbanCheck(p.$id);
+                        if (unbanResult?.unbanned) {
+                            toast.success('Your account has been automatically unbanned. Strikes have been reset.');
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading user/profile:', error);
+                if (isMounted) {
+                    // If there's an error, redirect to login
+                    router.replace('/login');
+                }
                 return;
+            } finally {
+                if (isMounted) {
+                    // Always set loading to false, regardless of success or failure
+                    setLoading(false);
+                }
             }
-            setUser(u as unknown as UserLike);
+        };
 
-            const p = await getOrCreateProfile(u);
-            setProfile(p as unknown as ProfileDoc);
+        // Add a timeout to prevent infinite loading
+        const timeoutId = setTimeout(() => {
+            if (isMounted && loading) {
+                console.warn('Loading timeout reached, redirecting to login');
+                setLoading(false);
+                router.replace('/login');
+            }
+        }, 10000); // 10 second timeout
 
-            setLoading(false);
-        })();
-    }, [authLoading, router]);
+        loadUserAndProfile();
+
+        return () => {
+            isMounted = false;
+            clearTimeout(timeoutId);
+        };
+    }, [authLoading, router, loading, user]);
+
+    // Handle sign out
+    const handleSignOut = async () => {
+        try {
+            await logout();
+            // Clear local state
+            setUser(null);
+            setProfile(null);
+            setRequests([]);
+            setOutgoing([]);
+            // Redirect to home page
+            router.replace('/');
+        } catch (error) {
+            console.error('Error during sign out:', error);
+            // Fallback redirect
+            router.replace('/');
+        }
+    };
 
     // fetch my incoming pending requests
     useEffect(() => {
@@ -111,7 +182,7 @@ export default function DashboardPage() {
     // accept/decline a request
     async function handleRequest(req: ChatRequestDoc, accepted: boolean) {
         if (accepted) {
-            const session = await databases.createDocument(ids.db, ids.chatsessions, ID.custom(req.$id), {
+            await databases.createDocument(ids.db, ids.chatsessions, ID.custom(req.$id), {
                 participants: [req.fromId, req.toId],
             });
 
@@ -138,35 +209,7 @@ export default function DashboardPage() {
         setOutgoing((prev) => prev.filter((r) => r.$id !== req.$id));
     }
 
-    // attempt to join a session created for this pair
-    const joinSessionWith = useCallback(async (partnerHandle: string) => {
-        // Try to find an existing session for both participants
-        const res = await databases.listDocuments(ids.db, ids.chatsessions, [
-            Query.contains('participants', profile!.handle),
-            Query.contains('participants', partnerHandle),
-        ]);
-        const session = (res.documents as unknown as SessionDoc[])[0];
-        if (session) {
-            router.push(`/chat/${session.$id}`);
-            return;
-        }
 
-        // If not found yet (race), subscribe once to detect creation
-        const unsubscribe = client.subscribe(
-            `databases.${ids.db}.collections.${ids.chatsessions}.documents`,
-            (ev) => {
-                const doc = ev.payload as SessionDoc;
-                if (
-                    Array.isArray(doc.participants) &&
-                    doc.participants.includes(profile!.handle) &&
-                    doc.participants.includes(partnerHandle)
-                ) {
-                    unsubscribe();
-                    router.push(`/chat/${doc.$id}`);
-                }
-            }
-        );
-    }, [ids.chatsessions, ids.db, profile, router]);
 
     // realtime subscription for requests (incoming + outgoing)
     useEffect(() => {
@@ -197,148 +240,370 @@ export default function DashboardPage() {
         return () => unsubscribe();
     }, [profile, router]);
 
-    if (loading) return <div className="min-h-dvh grid place-items-center">Loading…</div>;
+    // clear all chat requests
+    async function handleClearAllRequests() {
+        const ok = window.confirm('Are you sure you want to clear all chat requests? This action cannot be undone.');
+        if (!ok) return;
+
+        try {
+            const success = await clearAllChatRequests();
+            if (success) {
+                setRequests([]);
+                setOutgoing([]);
+                toast.success('All chat requests cleared successfully');
+            } else {
+                toast.error('Failed to clear some chat requests');
+            }
+        } catch {
+            toast.error('Failed to clear chat requests');
+        }
+    }
+
+    // clear all outgoing requests
+    async function handleClearAllOutgoing() {
+        const ok = window.confirm('Are you sure you want to clear all outgoing requests? This action cannot be undone.');
+        if (!ok) return;
+
+        try {
+            // Update all outgoing requests to cancelled status
+            for (const req of outgoing) {
+                if (req.status === 'pending') {
+                    await databases.updateDocument(ids.db, ids.chatrequests, req.$id, {
+                        status: 'cancelled',
+                    });
+                }
+            }
+            setOutgoing([]);
+            toast.success('All outgoing requests cleared successfully');
+        } catch (error) {
+            console.error('Error clearing outgoing requests:', error);
+            toast.error('Failed to clear some outgoing requests');
+        }
+    }
+
+    if (loading) return (
+        <div className="min-h-dvh grid place-items-center bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
+            <div className="text-center space-y-6">
+                <div className="relative">
+                    <div className="w-16 h-16 border-4 border-blue-200 dark:border-blue-800 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin mx-auto"></div>
+                    <div className="absolute inset-0 w-16 h-16 border-4 border-transparent border-t-blue-600 dark:border-t-blue-400 rounded-full animate-ping opacity-20"></div>
+                </div>
+                <div className="space-y-2">
+                    <div className="text-xl font-semibold text-[var(--foreground)]">Loading dashboard...</div>
+                    <div className="text-[var(--muted-foreground)]">Please wait while we load your profile</div>
+                </div>
+            </div>
+        </div>
+    );
 
     return (
-        <div className="min-h-dvh p-6">
-            <header className="flex items-center justify-between border-b pb-4">
-                <h1 className="text-2xl font-semibold">Dashboard</h1>
-                <button
-                    onClick={async () => {
-                        await logout();
-                        router.replace('/login');
-                    }}
-                    className="rounded-xl bg-gray-900 text-white px-4 py-2"
-                >
-                    Sign out
-                </button>
-            </header>
-
-            <main className="mt-6 grid gap-4 sm:grid-cols-2">
-                {/* Profile Card */}
-                <div className="rounded-2xl border p-4">
-                    <div className="text-gray-500 text-sm">Your Disappearo ID</div>
-                    <div className="mt-1 text-lg font-mono font-medium">{profile?.handle}</div>
-                    <div className="text-xs text-gray-400 mt-1">Share this ID to start chats</div>
-                </div>
-
-                {/* Account Card */}
-                <div className="rounded-2xl border p-4">
-                    <div className="text-gray-500 text-sm">Account</div>
-                    <div className="mt-1 font-medium">{user?.name || user?.email}</div>
-                    <div className="text-sm text-gray-500 mt-1 truncate">ID: {user?.$id}</div>
-                </div>
-
-                {/* Start a Chat */}
-                <div className="rounded-2xl border p-4">
-                    <div className="text-gray-500 text-sm">Start a Chat</div>
-                    <div className="flex gap-2 mt-2">
-                        <input
-                            type="text"
-                            value={targetId}
-                            onChange={(e) => setTargetId(e.target.value)}
-                            placeholder="Enter friend's Disappearo ID"
-                            className="flex-1 rounded-xl border py-2 px-3"
-                        />
-                        <button
-                            onClick={sendRequest}
-                            className="rounded-xl bg-indigo-600 text-white px-4 py-2"
-                        >
-                            Send
-                        </button>
-                    </div>
-                </div>
-
-                {/* Pending Requests */}
-                <div className="rounded-2xl border p-4 col-span-2">
-                    <h2 className="text-lg font-semibold mb-2">Pending Requests</h2>
-                    {requests.length === 0 && <p className="text-gray-500">No pending requests</p>}
-
-                    <ul className="space-y-2">
-                        {requests.map((req) => {
-                            const exp = req.expiresAt ? new Date(req.expiresAt).getTime() : 0;
-                            const remaining = Math.max(0, Math.floor((exp - Date.now()) / 1000));
-                            const mins = Math.floor(remaining / 60);
-                            const secs = remaining % 60;
-
-                            return (
-                                <li
-                                    key={req.$id}
-                                    className="border rounded-xl p-3 flex justify-between items-center"
+        <div className="min-h-dvh bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
+            <div className="max-w-6xl mx-auto p-4 sm:p-6">
+                <header className="mb-8">
+                    <div className="bg-[var(--card-background)] rounded-2xl p-6 shadow-sm border border-[var(--border)]">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                            <div>
+                                <h1 className="text-2xl sm:text-3xl font-bold text-[var(--foreground)]">Dashboard</h1>
+                                <p className="text-[var(--muted-foreground)] mt-1">Welcome back, {user?.name || user?.email}</p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={async () => {
+                                        console.log('Manual refresh triggered');
+                                        setLoading(true);
+                                        try {
+                                            const u = await getCurrentUser();
+                                            if (u) {
+                                                const p = await getOrCreateProfile(u as Models.User<Models.Preferences>);
+                                                setUser(u as unknown as UserLike);
+                                                setProfile(p as unknown as ProfileDoc);
+                                            } else {
+                                                router.replace('/login');
+                                            }
+                                        } catch (error) {
+                                            console.error('Manual refresh error:', error);
+                                            router.replace('/login');
+                                        } finally {
+                                            setLoading(false);
+                                        }
+                                    }}
+                                    className="px-4 py-2 bg-blue-600 dark:bg-blue-700 text-white rounded-xl hover:bg-blue-700 dark:hover:bg-blue-800 transition-all duration-200 shadow-sm hover:shadow-md"
+                                    title="Refresh dashboard data"
                                 >
-                                    <span>
-                                        From: {req.fromId}{' '}
-                                        <span className="text-xs text-gray-500">
-                                            (expires in {mins}:{secs.toString().padStart(2, '0')})
-                                        </span>
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                </button>
+                                <button
+                                    onClick={handleSignOut}
+                                    className="px-4 py-2 border-2 border-[var(--border)] text-[var(--foreground)] rounded-xl hover:bg-[var(--muted)] transition-all duration-200"
+                                >
+                                    Sign out
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </header>
+
+                <main className="space-y-6">
+                    {/* Profile & Account Cards */}
+                    <div className="grid gap-6 sm:grid-cols-2">
+                        {/* Profile Card */}
+                        <div className="bg-[var(--card-background)] rounded-2xl p-6 shadow-sm border border-[var(--border)] hover:shadow-md transition-all duration-200">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex items-center justify-center">
+                                    <svg className="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 className="font-semibold text-[var(--foreground)]">Your Disappearo ID</h3>
+                                    <p className="text-sm text-[var(--muted-foreground)]">Share this ID to start chats</p>
+                                </div>
+                            </div>
+                            <div className="font-mono text-lg font-bold text-blue-600 dark:text-blue-400 break-all bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl">
+                                {profile?.handle}
+                            </div>
+                        </div>
+
+                        {/* Account Card */}
+                        <div className="bg-[var(--card-background)] rounded-2xl p-6 shadow-sm border border-[var(--border)] hover:shadow-md transition-all duration-200">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="w-10 h-10 bg-green-100 dark:bg-green-900/30 rounded-xl flex items-center justify-center">
+                                    <svg className="w-6 h-6 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 className="font-semibold text-[var(--foreground)]">Account</h3>
+                                    <p className="text-sm text-[var(--muted-foreground)]">Your account details</p>
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <div className="text-[var(--foreground)] font-medium truncate">{user?.name || user?.email}</div>
+                                <div className="text-sm text-[var(--muted-foreground)] font-mono">ID: {user?.$id}</div>
+                            </div>
+                        </div>
+
+                        {/* Strike Status Card */}
+                        <div className="bg-[var(--card-background)] rounded-2xl p-6 shadow-sm border border-[var(--border)] hover:shadow-md transition-all duration-200">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="w-10 h-10 bg-orange-100 dark:bg-orange-900/30 rounded-xl flex items-center justify-center">
+                                    <svg className="w-6 h-6 text-orange-600 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 className="font-semibold text-[var(--foreground)]">Content Moderation</h3>
+                                    <p className="text-sm text-[var(--muted-foreground)]">Your moderation status</p>
+                                </div>
+                            </div>
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[var(--foreground)] text-sm">Strikes:</span>
+                                    <span className={`font-mono text-lg font-bold ${profile?.strikes && profile.strikes > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-green-600 dark:text-green-400'}`}>
+                                        {profile?.strikes || 0}/3
                                     </span>
-                                    <div className="flex gap-2">
-                                        <button
-                                            onClick={() => handleRequest(req, true)}
-                                            className="bg-green-600 text-white px-3 py-1 rounded-lg"
-                                        >
-                                            Accept
-                                        </button>
-                                        <button
-                                            onClick={() => handleRequest(req, false)}
-                                            className="bg-red-600 text-white px-3 py-1 rounded-lg"
-                                        >
-                                            Decline
-                                        </button>
+                                </div>
+                                {profile?.banned ? (
+                                    <div className="bg-red-100 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
+                                        <div className="flex items-center gap-2">
+                                            <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                            <span className="text-red-600 dark:text-red-400 text-sm font-medium">Account Banned</span>
+                                        </div>
+                                        <p className="text-red-600 dark:text-red-400 text-xs mt-1">
+                                            You will be automatically unbanned in 10 minutes
+                                        </p>
                                     </div>
-                                </li>
-                            );
-                        })}
-                    </ul>
-                </div>
+                                ) : profile?.strikes && profile.strikes > 0 ? (
+                                    <div className="bg-yellow-100 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+                                        <div className="flex items-center gap-2">
+                                            <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                                            </svg>
+                                            <span className="text-yellow-600 dark:text-yellow-400 text-sm font-medium">Warning</span>
+                                        </div>
+                                        <p className="text-yellow-600 dark:text-yellow-400 text-xs mt-1">
+                                            {3 - (profile.strikes || 0)} more violation(s) before ban
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <div className="bg-green-100 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3">
+                                        <div className="flex items-center gap-2">
+                                            <svg className="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                            </svg>
+                                            <span className="text-green-600 dark:text-green-400 text-sm font-medium">Good Standing</span>
+                                        </div>
+                                        <p className="text-green-600 dark:text-green-400 text-xs mt-1">
+                                            No violations recorded
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
 
-                {/* Your Sent Requests */}
-                <div className="rounded-2xl border p-4 col-span-2">
-                    <h2 className="text-lg font-semibold mb-2">Your Sent Requests</h2>
-                    {outgoing.length === 0 && <p className="text-gray-500">No sent requests</p>}
+                    {/* Start a Chat */}
+                    <div className="bg-[var(--card-background)] rounded-2xl p-6 shadow-sm border border-[var(--border)] hover:shadow-md transition-all duration-200">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 bg-purple-100 dark:bg-purple-900/30 rounded-xl flex items-center justify-center">
+                                <svg className="w-6 h-6 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 className="font-semibold text-[var(--foreground)]">Start a Chat</h3>
+                                <p className="text-sm text-[var(--muted-foreground)]">Connect with friends using their Disappearo ID</p>
+                            </div>
+                        </div>
+                        <div className="flex flex-col sm:flex-row gap-3">
+                            <input
+                                type="text"
+                                value={targetId}
+                                onChange={(e) => setTargetId(e.target.value)}
+                                placeholder="Enter friend's Disappearo ID"
+                                className="w-full border border-[var(--border)] py-3 px-4 bg-[var(--input-background)] text-[var(--input-foreground)] placeholder-[var(--muted-foreground)] text-base focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent transition-all duration-200"
+                            />
+                            <button
+                                onClick={sendRequest}
+                                className="px-6 py-3 bg-blue-600 dark:bg-blue-700 text-white rounded-xl font-medium hover:bg-blue-700 dark:hover:bg-blue-800 transform hover:scale-105 transition-all duration-200 shadow-sm hover:shadow-md"
+                            >
+                                Send Request
+                            </button>
+                        </div>
+                    </div>
 
-                    <ul className="space-y-2">
-                        {outgoing.map((req) => {
-                            const exp = req.expiresAt ? new Date(req.expiresAt).getTime() : 0;
-                            const remaining = Math.max(0, Math.floor((exp - Date.now()) / 1000));
-                            const mins = Math.floor(remaining / 60);
-                            const secs = remaining % 60;
+                    {/* Pending Requests */}
+                    <div className="bg-[var(--card-background)] rounded-2xl p-6 shadow-sm border border-[var(--border)] hover:shadow-md transition-all duration-200">
+                        <div className="flex items-center justify-between mb-6">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-orange-100 dark:bg-orange-900/30 rounded-xl flex items-center justify-center">
+                                    <svg className="w-6 h-6 text-orange-600 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-semibold text-[var(--foreground)]">Pending Requests</h3>
+                                    <p className="text-sm text-[var(--muted-foreground)]">Chat requests waiting for your response</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={handleClearAllRequests}
+                                className="px-4 py-2 bg-red-600 dark:bg-red-700 text-white rounded-xl hover:bg-red-700 dark:hover:bg-red-800 transition-all duration-200 shadow-sm hover:shadow-md"
+                                title="Clear all chat requests"
+                            >
+                                Clear All
+                            </button>
+                        </div>
 
-                            return (
-                                <li key={req.$id} className="border rounded-xl p-3 flex justify-between items-center">
-                                    <span>
-                                        To: {req.toId}{' '}
-                                        {req.expiresAt && (
-                                            <span className="text-xs text-gray-500">
-                                                (expires in {mins}:{secs.toString().padStart(2, '0')})
-                                            </span>
-                                        )}
-                                        <span className="ml-2 text-xs uppercase tracking-wide text-gray-500">{req.status}</span>
-                                    </span>
-                                    <div className="flex gap-2">
+                        {requests.length === 0 ? (
+                            <div className="text-center py-8">
+                                <div className="w-16 h-16 bg-[var(--muted)] rounded-full flex items-center justify-center mx-auto mb-3">
+                                    <svg className="w-8 h-8 text-[var(--muted-foreground)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                                    </svg>
+                                </div>
+                                <p className="text-[var(--muted-foreground)] font-medium">No pending requests</p>
+                                <p className="text-sm text-[var(--muted-foreground)]">When someone sends you a chat request, it will appear here</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {requests.map((req) => {
+                                    const exp = req.expiresAt ? new Date(req.expiresAt).getTime() : 0;
+                                    const remaining = Math.max(0, Math.floor((exp - Date.now()) / 1000));
+                                    const mins = Math.floor(remaining / 60);
+                                    const secs = remaining % 60;
+
+                                    return (
+                                        <div key={req.$id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-4 border border-[var(--border)] rounded-xl gap-4 bg-[var(--muted)] hover:bg-[var(--muted)] transition-all duration-200">
+                                            <div className="flex-1">
+                                                <div className="font-semibold text-[var(--foreground)] mb-1">{req.fromId}</div>
+                                                <div className="text-sm text-[var(--muted-foreground)]">
+                                                    Expires in <span className="font-mono text-orange-600 dark:text-orange-400">{mins}m {secs}s</span>
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => handleRequest(req, true)}
+                                                    className="px-4 py-2 bg-green-600 dark:bg-green-700 text-white rounded-lg text-sm font-medium hover:bg-green-700 dark:hover:bg-green-800 transition-all duration-200 shadow-sm hover:shadow-md"
+                                                >
+                                                    Accept
+                                                </button>
+                                                <button
+                                                    onClick={() => handleRequest(req, false)}
+                                                    className="px-4 py-2 bg-red-600 dark:bg-red-700 text-white rounded-lg text-sm font-medium hover:bg-red-700 dark:hover:bg-red-800 transition-all duration-200 shadow-sm hover:shadow-md"
+                                                >
+                                                    Decline
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Outgoing Requests */}
+                    <div className="bg-[var(--card-background)] rounded-2xl p-6 shadow-sm border border-[var(--border)] hover:shadow-md transition-all duration-200">
+                        <div className="flex items-center justify-between mb-6">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex items-center justify-center">
+                                    <svg className="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-semibold text-[var(--foreground)]">Outgoing Requests</h3>
+                                    <p className="text-sm text-[var(--muted-foreground)]">Chat requests you&apos;ve sent to others</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={handleClearAllOutgoing}
+                                className="px-4 py-2 bg-red-600 dark:bg-red-700 text-white rounded-xl hover:bg-red-700 dark:hover:bg-red-800 transition-all duration-200 shadow-sm hover:shadow-md"
+                                title="Clear all outgoing requests"
+                            >
+                                Clear All
+                            </button>
+                        </div>
+
+                        {outgoing.length === 0 ? (
+                            <div className="text-center py-8">
+                                <div className="w-16 h-16 bg-[var(--muted)] rounded-full flex items-center justify-center mx-auto mb-3">
+                                    <svg className="w-8 h-8 text-[var(--muted-foreground)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                    </svg>
+                                </div>
+                                <p className="text-[var(--muted-foreground)] font-medium">No outgoing requests</p>
+                                <p className="text-sm text-[var(--muted-foreground)]">Send chat requests to start conversations</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {outgoing.map((req) => (
+                                    <div key={req.$id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-4 border border-[var(--border)] rounded-xl gap-4 bg-[var(--muted)] hover:bg-[var(--muted)] transition-all duration-200">
+                                        <div className="flex-1">
+                                            <div className="font-semibold text-[var(--foreground)] mb-1">To: {req.toId}</div>
+                                            <div className="text-sm text-[var(--muted-foreground)]">
+                                                Status: <span className={`capitalize font-medium ${req.status === 'accepted' ? 'text-green-600 dark:text-green-400' : req.status === 'declined' ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400'}`}>{req.status}</span>
+                                            </div>
+                                        </div>
                                         {req.status === 'pending' && (
                                             <button
                                                 onClick={() => cancelOutgoing(req)}
-                                                className="bg-gray-200 text-gray-900 px-3 py-1 rounded-lg"
+                                                className="px-4 py-2 bg-[var(--secondary)] text-[var(--secondary-foreground)] rounded-lg text-sm font-medium hover:bg-[var(--muted)] transition-all duration-200 shadow-sm hover:shadow-md"
                                             >
                                                 Cancel
                                             </button>
                                         )}
-                                        {req.status === 'accepted' && (
-                                            <button
-                                                onClick={() => joinSessionWith(req.toId)}
-                                                className="bg-indigo-600 text-white px-3 py-1 rounded-lg"
-                                            >
-                                                Join
-                                            </button>
-                                        )}
                                     </div>
-                                </li>
-                            );
-                        })}
-                    </ul>
-                </div>
-            </main>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </main>
+            </div>
         </div>
     );
 }
