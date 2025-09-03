@@ -43,7 +43,7 @@ export default function Footer() {
                             href="https://rajjitlaishram.netlify.app/"
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="w-8 h-8 bg-white dark:bg-white rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-200 transition-all duration-200 group"
+                            className="w-8 h-8 bg-white dark:bg-white rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-200 transition-all duration-200 group border"
                             title="Portfolio"
                         >
                             <Image src="https://rajjitlaishram.netlify.app/favicon.ico" alt="Portfolio" width={16} height={16} />
@@ -54,7 +54,7 @@ export default function Footer() {
                             href="https://rjsblog.in/"
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="w-8 h-8 bg-white dark:bg-white rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-200 transition-all duration-200 group"
+                            className="w-8 h-8 bg-white dark:bg-white rounded-full flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-200 transition-all duration-200 group border"
                             title="Blog"
                         >
                             <Image src="https://rjsblog.in/assets/favicon-BHHsaGPN.ico" alt="Blog" width={16} height={16} />

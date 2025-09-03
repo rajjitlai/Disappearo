@@ -5,6 +5,7 @@ import { useAuth } from '@/app/state/AuthContext';
 import { useParams, useRouter } from 'next/navigation';
 import { client, ids, getOrCreateProfile, getCurrentUser, sendMessage, listMessages, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike } from '@/app/lib/appwrite';
 import toast from 'react-hot-toast';
+import Image from 'next/image';
 
 type Profile = {
     $id: string;
@@ -209,23 +210,38 @@ export default function ChatPage() {
         try {
             const { url, fileId } = await uploadImage(f);
             if (url) {
-                const mod = await fetch('/api/moderate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type: 'image', url }),
-                }).then(r => r.json()).catch(() => ({ ok: true }));
-                if (!mod.ok) {
-                    const res = await incrementStrike(profile.$id);
-                    if (res.banned) {
-                        toast.error('Banned due to repeated violations. Your account has been suspended.');
-                        // Delete current chat and redirect to dashboard
-                        await deleteAllSessionMessages(roomId as string);
-                        await deleteSession(roomId as string);
-                        router.replace('/dashboard');
-                        return;
+                // Attempt image moderation
+                try {
+                    const mod = await fetch('/api/moderate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: 'image', url }),
+                    });
+
+                    if (mod.ok) {
+                        const modResult = await mod.json();
+                        if (!modResult.ok) {
+                            const res = await incrementStrike(profile.$id);
+                            if (res.banned) {
+                                toast.error('Banned due to repeated violations. Your account has been suspended.');
+                                // Delete current chat and redirect to dashboard
+                                await deleteAllSessionMessages(roomId as string);
+                                await deleteSession(roomId as string);
+                                router.replace('/dashboard');
+                                return;
+                            }
+                            toast.error(`Image blocked. Strikes: ${res.strikes}/3`);
+                            return;
+                        }
+                    } else {
+                        // If moderation API fails, log it but allow the image
+                        console.warn('Image moderation API failed, allowing image');
+                        toast('Image uploaded (moderation unavailable)');
                     }
-                    toast.error(`Image blocked. Strikes: ${res.strikes}/3`);
-                    return;
+                } catch (modError) {
+                    // If moderation completely fails, allow the image
+                    console.warn('Image moderation failed, allowing image:', modError);
+                    toast('Image uploaded (moderation unavailable)');
                 }
             }
             if (!url) {
@@ -569,7 +585,7 @@ export default function ChatPage() {
                             >
                                 {isImage ? (
                                     <div className="rounded-lg overflow-hidden">
-                                        <img
+                                        <Image
                                             src={imageUrl}
                                             alt={imageName}
                                             className="block w-full h-auto pointer-events-none select-none"

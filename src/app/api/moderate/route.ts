@@ -89,18 +89,54 @@ async function moderateTextHF(text: string) {
 }
 
 async function moderateImageHF(url: string) {
-    const data = await hfRequest('Falconsai/nsfw_image_detection', { inputs: url });
-    const items = Array.isArray(data) ? data : (data?.[0] || []);
-    let nsfw = 0;
-    if (Array.isArray(items)) {
-        for (const it of items) {
-            const label = (it.label || it?.[0])?.toString().toLowerCase();
-            const score = Number(it.score || it?.[1] || 0);
-            if (label?.includes('nsfw') || label?.includes('porn')) nsfw = Math.max(nsfw, score);
+    try {
+        const data = await hfRequest('Falconsai/nsfw_image_detection', { inputs: url });
+        const items = Array.isArray(data) ? data : (data?.[0] || []);
+        let nsfw = 0;
+        if (Array.isArray(items)) {
+            for (const it of items) {
+                const label = (it.label || it?.[0])?.toString().toLowerCase();
+                const score = Number(it.score || it?.[1] || 0);
+                if (label?.includes('nsfw') || label?.includes('porn')) nsfw = Math.max(nsfw, score);
+            }
         }
+        const blocked = nsfw >= 0.8;
+        return { blocked, score: { nsfw } };
+    } catch (error) {
+        // If image moderation fails, allow the image (fail open for safety)
+        console.warn('Image moderation failed, allowing image:', error);
+        return { blocked: false, score: { nsfw: 0, error: 'moderation_failed' } };
     }
-    const blocked = nsfw >= 0.8;
-    return { blocked, score: { nsfw } };
+}
+
+// Enhanced image moderation with comprehensive fallback
+async function moderateImage(url: string) {
+    // Check if image moderation is disabled via environment variable
+    if (process.env.DISABLE_IMAGE_MODERATION === 'true') {
+        console.log('Image moderation disabled via environment variable');
+        return {
+            blocked: false,
+            reason: 'disabled',
+            score: { disabled: true }
+        };
+    }
+
+    try {
+        const aiCheck = await moderateImageHF(url);
+        return {
+            blocked: aiCheck.blocked,
+            reason: aiCheck.blocked ? 'ai_moderation' : 'passed',
+            score: aiCheck.score
+        };
+    } catch (error) {
+        // If AI moderation fails completely, allow the image
+        console.warn('Image moderation completely failed, allowing image:', error);
+        return {
+            blocked: false,
+            reason: 'ai_failed',
+            score: { error: 'complete_failure' }
+        };
+    }
 }
 
 // Enhanced text moderation combining custom bad words and AI
@@ -151,14 +187,34 @@ export async function POST(req: NextRequest) {
             });
         }
         if (body.type === 'image') {
-            const res = await moderateImageHF(body.url);
-            return NextResponse.json({ ok: !res.blocked, score: res.score });
+            const res = await moderateImage(body.url);
+            return NextResponse.json({
+                ok: !res.blocked,
+                reason: res.reason,
+                score: res.score
+            });
         }
         return NextResponse.json({ ok: false, error: 'Unsupported type' }, { status: 400 });
     } catch (e: unknown) {
         const error = e as Error;
         return NextResponse.json({ ok: false, error: error?.message || 'Moderation failed' }, { status: 500 });
     }
+}
+
+// GET endpoint for testing and debugging
+export async function GET() {
+    const hasToken = !!process.env.HUGGINGFACE_API_TOKEN;
+    const imageModDisabled = process.env.DISABLE_IMAGE_MODERATION === 'true';
+
+    return NextResponse.json({
+        status: 'ok',
+        hasHuggingFaceToken: hasToken,
+        imageModerationDisabled: imageModDisabled,
+        message: hasToken
+            ? 'Moderation API is configured'
+            : 'HUGGINGFACE_API_TOKEN not set - moderation will fail open',
+        timestamp: new Date().toISOString()
+    });
 }
 
 

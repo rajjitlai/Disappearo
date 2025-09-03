@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getCurrentUser, logout, getOrCreateProfile, ids, databases, client, clearAllChatRequests, getProfileWithUnbanCheck } from '@/app/lib/appwrite';
+import { getOrCreateProfile, ids, databases, client, clearAllChatRequests, getProfileWithUnbanCheck } from '@/app/lib/appwrite';
 import { useAuth } from '@/app/state/AuthContext';
 import { useRouter } from 'next/navigation';
 import { ID, Query, Models } from 'appwrite';
@@ -25,7 +25,7 @@ type ChatRequestDoc = {
 };
 
 export default function DashboardPage() {
-    const { loading: authLoading } = useAuth();
+    const { user: authUser, signOut: authSignOut, refresh: authRefresh } = useAuth();
     const [user, setUser] = useState<UserLike>(null);
     const [profile, setProfile] = useState<ProfileDoc>(null);
     const [loading, setLoading] = useState(true);
@@ -58,10 +58,8 @@ export default function DashboardPage() {
 
         const loadUserAndProfile = async () => {
             try {
-                if (authLoading) return;
-
-                const u = await getCurrentUser();
-                if (!u) {
+                // If no user in auth context, redirect to login
+                if (!authUser) {
                     if (isMounted) {
                         router.replace('/login');
                     }
@@ -69,10 +67,10 @@ export default function DashboardPage() {
                 }
 
                 if (isMounted) {
-                    setUser(u as unknown as UserLike);
+                    setUser(authUser);
                 }
 
-                const p = await getOrCreateProfile(u as Models.User<Models.Preferences>);
+                const p = await getOrCreateProfile(authUser as Models.User<Models.Preferences>);
                 if (isMounted) {
                     setProfile(p as unknown as ProfileDoc);
 
@@ -99,38 +97,66 @@ export default function DashboardPage() {
             }
         };
 
-        // Add a timeout to prevent infinite loading
-        const timeoutId = setTimeout(() => {
-            if (isMounted && loading) {
-                console.warn('Loading timeout reached, redirecting to login');
-                setLoading(false);
-                router.replace('/login');
-            }
-        }, 10000); // 10 second timeout
-
-        loadUserAndProfile();
+        // Load profile whenever we have a user
+        if (authUser) {
+            loadUserAndProfile();
+        }
 
         return () => {
             isMounted = false;
-            clearTimeout(timeoutId);
         };
-    }, [authLoading, router, loading, user]);
+    }, [authUser, router]);
 
     // Handle sign out
     const handleSignOut = async () => {
         try {
-            await logout();
+            // Use the auth context signOut function
+            await authSignOut();
+
             // Clear local state
             setUser(null);
             setProfile(null);
             setRequests([]);
             setOutgoing([]);
+
+            // Small delay to ensure auth context is updated
+            await new Promise(resolve => setTimeout(resolve, 100));
+
             // Redirect to home page
             router.replace('/');
         } catch (error) {
             console.error('Error during sign out:', error);
             // Fallback redirect
             router.replace('/');
+        }
+    };
+
+    // Manual refresh function
+    const handleManualRefresh = async () => {
+        console.log('Manual refresh triggered');
+        setLoading(true);
+        try {
+            // Use the auth context refresh function
+            await authRefresh();
+
+            // Reload profile data
+            if (authUser) {
+                const p = await getOrCreateProfile(authUser as Models.User<Models.Preferences>);
+                setProfile(p as unknown as ProfileDoc);
+
+                // Check for auto-unban
+                if (p) {
+                    const unbanResult = await getProfileWithUnbanCheck(p.$id);
+                    if (unbanResult?.unbanned) {
+                        toast.success('Your account has been automatically unbanned. Strikes have been reset.');
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Manual refresh error:', error);
+            router.replace('/login');
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -308,25 +334,7 @@ export default function DashboardPage() {
                             </div>
                             <div className="flex items-center gap-3">
                                 <button
-                                    onClick={async () => {
-                                        console.log('Manual refresh triggered');
-                                        setLoading(true);
-                                        try {
-                                            const u = await getCurrentUser();
-                                            if (u) {
-                                                const p = await getOrCreateProfile(u as Models.User<Models.Preferences>);
-                                                setUser(u as unknown as UserLike);
-                                                setProfile(p as unknown as ProfileDoc);
-                                            } else {
-                                                router.replace('/login');
-                                            }
-                                        } catch (error) {
-                                            console.error('Manual refresh error:', error);
-                                            router.replace('/login');
-                                        } finally {
-                                            setLoading(false);
-                                        }
-                                    }}
+                                    onClick={handleManualRefresh}
                                     className="px-4 py-2 bg-blue-600 dark:bg-blue-700 text-white rounded-xl hover:bg-blue-700 dark:hover:bg-blue-800 transition-all duration-200 shadow-sm hover:shadow-md"
                                     title="Refresh dashboard data"
                                 >
@@ -362,7 +370,16 @@ export default function DashboardPage() {
                                 </div>
                             </div>
                             <div className="font-mono text-lg font-bold text-blue-600 dark:text-blue-400 break-all bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl">
-                                {profile?.handle}
+                                {loading ? (
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-4 h-4 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin"></div>
+                                        <span className="text-blue-400">Loading...</span>
+                                    </div>
+                                ) : profile?.handle ? (
+                                    profile.handle
+                                ) : (
+                                    <span className="text-red-400">Failed to load</span>
+                                )}
                             </div>
                         </div>
 
@@ -380,8 +397,17 @@ export default function DashboardPage() {
                                 </div>
                             </div>
                             <div className="space-y-2">
-                                <div className="text-[var(--foreground)] font-medium truncate">{user?.name || user?.email}</div>
-                                <div className="text-sm text-[var(--muted-foreground)] font-mono">ID: {user?.$id}</div>
+                                {loading ? (
+                                    <div className="space-y-2">
+                                        <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+                                        <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-3/4"></div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="text-[var(--foreground)] font-medium truncate">{user?.name || user?.email}</div>
+                                        <div className="text-sm text-[var(--muted-foreground)] font-mono">ID: {user?.$id}</div>
+                                    </>
+                                )}
                             </div>
                         </div>
 

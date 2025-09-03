@@ -3,16 +3,18 @@ import Link from 'next/link';
 import { useAuth } from '@/app/state/AuthContext';
 import { useEffect } from 'react';
 import Image from 'next/image';
-import logo from '../../public/logo.png';
-import logoWhite from "../../public/logo-white.png";
+import { useRouter } from 'next/navigation';
+import logo from '../../public/disappearo.png';
 
 export default function Home() {
   const { user, loading } = useAuth();
+  const router = useRouter();
+
   useEffect(() => {
     if (!loading && user) {
-      window.location.replace('/dashboard');
+      router.replace('/dashboard');
     }
-  }, [loading, user]);
+  }, [loading, user, router]);
 
   return (
     <main className="min-h-dvh grid place-items-center bg-[var(--background)] text-[var(--foreground)]">
@@ -23,18 +25,10 @@ export default function Home() {
             <div className="mx-auto">
               <Image
                 src={logo}
-                alt="Disappearo Logo Black"
+                alt="Disappearo"
                 width={200}
                 height={200}
-                className="block dark:hidden mx-auto"
-                priority
-              />
-              <Image
-                src={logoWhite}
-                alt="Disappearo Logo White"
-                width={200}
-                height={200}
-                className="hidden dark:block mx-auto"
+                className="mx-auto rounded-full"
                 priority
               />
             </div>

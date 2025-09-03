@@ -20,6 +20,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const refresh = useCallback(async () => {
         try {
+            setLoading(true);
             const u = await getCurrentUser();
             setUser(u);
 
@@ -31,10 +32,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 } catch (cookieError) {
                     console.warn('Failed to set d_auth cookie:', cookieError);
                 }
+            } else {
+                // Clear the cookie if no user
+                try {
+                    document.cookie = 'd_auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+                } catch (cookieError) {
+                    console.warn('Failed to clear d_auth cookie:', cookieError);
+                }
             }
         } catch (error) {
             console.error('Error refreshing user:', error);
             setUser(null);
+            // Clear the cookie on error
+            try {
+                document.cookie = 'd_auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+            } catch (cookieError) {
+                console.warn('Failed to clear d_auth cookie:', cookieError);
+            }
         } finally {
             setLoading(false);
         }

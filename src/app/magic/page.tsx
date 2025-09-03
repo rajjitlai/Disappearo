@@ -32,6 +32,7 @@ function MagicCallbackContent() {
                     document.cookie = `d_auth=1; path=/; max-age=86400; samesite=lax${secure}`;
                 } catch { }
                 router.replace('/dashboard');
+                window.location.reload();
             } catch (e: unknown) {
                 const error = e as Error;
                 setStatus(error?.message ?? 'Could not create session.');
