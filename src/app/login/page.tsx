@@ -22,7 +22,7 @@ export default function LoginPage() {
         setErr('');
         try {
             const url = `${window.location.origin}/magic`;
-            await account.createMagicURLToken(ID.unique(), email, url);
+            await account.createMagicURLToken({ userId: ID.unique(), email, url });
             setSent(true);
         } catch (e: unknown) {
             const error = e as Error;

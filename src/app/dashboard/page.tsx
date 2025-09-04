@@ -58,9 +58,10 @@ export default function DashboardPage() {
 
         const loadUserAndProfile = async () => {
             try {
-                // If no user in auth context, redirect to login
+                // If no user in auth context, stop loading and redirect
                 if (!authUser) {
                     if (isMounted) {
+                        setLoading(false);
                         router.replace('/login');
                     }
                     return;
@@ -100,6 +101,9 @@ export default function DashboardPage() {
         // Load profile whenever we have a user
         if (authUser) {
             loadUserAndProfile();
+        } else {
+            // No user: ensure we don't keep spinner indefinitely
+            setLoading(false);
         }
 
         return () => {

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Inter } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import ClientProviders from './providers/ClientProviders';
 
@@ -14,11 +14,6 @@ const geistSans = Geist({
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
-const inter = Inter({
-  variable: "--font-inter",
   subsets: ["latin"],
 });
 
@@ -44,7 +39,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: `(function(){try{var m=localStorage.getItem('theme');if(!m){var c=document.cookie.match(/(?:^|; )theme=([^;]+)/);m=c?decodeURIComponent(c[1]):null;}var t=m||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t);}catch(_){}})();` }} />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} antialiased min-h-dvh flex flex-col bg-[var(--background)] text-[var(--foreground)]`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-dvh flex flex-col bg-[var(--background)] text-[var(--foreground)]`}
       >
         <ClientProviders>
           <ResponsiveNav />
