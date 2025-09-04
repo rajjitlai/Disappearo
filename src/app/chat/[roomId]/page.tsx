@@ -3,7 +3,8 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAuth } from '@/app/state/AuthContext';
 import { useParams, useRouter } from 'next/navigation';
-import { client, ids, getOrCreateProfile, getCurrentUser, sendMessage, listMessages, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike, deleteImageFile } from '@/app/lib/appwrite';
+import { client, ids, getOrCreateProfile, getCurrentUser, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike, deleteImageFile } from '@/app/lib/appwrite';
+import { useRealtimeChat } from '@/app/hooks/useRealtimeChat';
 import toast from 'react-hot-toast';
 import Image from 'next/image';
 
@@ -36,7 +37,6 @@ export default function ChatPage() {
     const { loading: authLoading } = useAuth();
     const { roomId } = useParams();
     const [profile, setProfile] = useState<Profile | null>(null);
-    const [messages, setMessages] = useState<Message[]>([]);
     const [text, setText] = useState('');
     const [showEmoji, setShowEmoji] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -44,14 +44,16 @@ export default function ChatPage() {
     const inputRef = useRef<HTMLInputElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const unsubRef = useRef<null | (() => void)>(null);
     const inactivityTimerRef = useRef<null | ReturnType<typeof setInterval>>(null);
     const router = useRouter();
     const [exporting, setExporting] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [uploadingImageName, setUploadingImageName] = useState<string | null>(null);
     const sendingRef = useRef(false);
-    const realtimeReadyRef = useRef(false);
     const lastDownloadedReqId = useRef<string | null>(null);
+
+    // Use Socket.io for real-time messaging
+    const { messages, sendMessage, isConnected, isLoading } = useRealtimeChat(roomId as string);
 
     // load user + profile
     useEffect(() => {
@@ -75,58 +77,9 @@ export default function ChatPage() {
         })();
     }, [authLoading, router]);
 
-    // fetch messages
-    useEffect(() => {
-        if (!roomId) return;
-        (async () => {
-            const res = await listMessages(roomId as string);
-            const docs = (res as { documents: unknown[] }).documents ?? res;
-            // ensure unique and sorted
-            const uniq = new Map<string, Message>();
-            for (const d of docs) {
-                const message = d as Message;
-                uniq.set(message.$id, message);
-            }
-            const arr = Array.from(uniq.values()).sort((a, b) =>
-                new Date(a.$createdAt).getTime() - new Date(b.$createdAt).getTime()
-            );
-            setMessages(arr);
-        })();
-    }, [roomId]);
+    // Messages are now handled by useRealtimeChat hook
 
-    // subscribe to realtime updates
-    useEffect(() => {
-        if (!roomId) return;
-
-        const unsubscribe = client.subscribe(
-            `databases.${ids.db}.collections.${ids.messages}.documents`,
-            (res) => {
-                realtimeReadyRef.current = true;
-                const doc: Message = res.payload as Message;
-                if (doc.sessionId === roomId) {
-                    const isCreate = res.events.some((e: string) => e.endsWith('.create'));
-                    const isDelete = res.events.some((e: string) => e.endsWith('.delete'));
-                    const isUpdate = res.events.some((e: string) => e.endsWith('.update'));
-                    setMessages((prev) => {
-                        if (isDelete) return prev.filter((m) => m.$id !== doc.$id);
-                        if (isUpdate) return prev.map((m) => (m.$id === doc.$id ? doc : m));
-                        if (isCreate) {
-                            // guard duplicate create
-                            if (prev.some((m) => m.$id === doc.$id)) return prev;
-                            return [...prev, doc];
-                        }
-                        return prev;
-                    });
-                }
-            }
-        );
-
-        unsubRef.current = unsubscribe;
-        return () => {
-            unsubRef.current = null;
-            unsubscribe();
-        };
-    }, [roomId]);
+    // Realtime messaging is now handled by Socket.io in useRealtimeChat hook
 
     // subscribe to session lifecycle; if session is deleted by the other participant, exit cleanly
     useEffect(() => {
@@ -229,17 +182,15 @@ export default function ChatPage() {
             return;
         }
         try {
-            await sendMessage(roomId as string, profile.handle, content);
-            setText('');
-        } catch {
-            // If initial send fails (e.g., transient disconnect), retry once after a short delay
-            await new Promise((r) => setTimeout(r, 500));
-            try {
-                await sendMessage(roomId as string, profile.handle, content);
+            const success = await sendMessage(profile.handle, content);
+            if (success) {
                 setText('');
-            } catch {
+            } else {
                 toast.error('Failed to send message. Please try again.');
             }
+        } catch (err: unknown) {
+            const error = err as Error;
+            toast.error(error?.message || 'Failed to send message. Please try again.');
         } finally {
             sendingRef.current = false;
         }
@@ -260,6 +211,7 @@ export default function ChatPage() {
         }
         try {
             setUploading(true);
+            setUploadingImageName(f.name);
             const { url, fileId } = await uploadImage(f);
             if (url) {
                 // Attempt image moderation
@@ -300,12 +252,16 @@ export default function ChatPage() {
             }
             // encode as control message to avoid schema changes
             const payload = `__image__|${encodeURIComponent(url)}|${fileId}|${encodeURIComponent(f.name)}`;
-            await sendMessage(roomId as string, profile.handle, payload);
+            const success = await sendMessage(profile.handle, payload);
+            if (!success) {
+                toast.error('Failed to send image message');
+            }
         } catch (err: unknown) {
             const error = err as Error;
             toast.error(error?.message || 'Failed to upload image');
         } finally {
             setUploading(false);
+            setUploadingImageName(null);
             if (fileInputRef.current) fileInputRef.current.value = '';
         }
     }
@@ -530,7 +486,14 @@ export default function ChatPage() {
                         </div>
                         <div>
                             <h1 className="font-semibold leading-none">Chat</h1>
-                            <p className="text-[10px] text-[var(--muted-foreground)]">Ephemeral • Private</p>
+                            <p className="text-[10px] text-[var(--muted-foreground)]">
+                                Ephemeral • Private
+                                {isConnected ? (
+                                    <span className="text-green-600 dark:text-green-400 ml-1">• Connected</span>
+                                ) : (
+                                    <span className="text-red-600 dark:text-red-400 ml-1">• Connecting...</span>
+                                )}
+                            </p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -780,6 +743,15 @@ export default function ChatPage() {
                             </button>
                         </div>
                     </div>
+
+                    {uploading && uploadingImageName && (
+                        <div className="mt-2 px-3 sm:px-4">
+                            <div className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                                <span>Uploading {uploadingImageName}...</span>
+                            </div>
+                        </div>
+                    )}
 
                     {showEmoji && (
                         <div className="mt-3">

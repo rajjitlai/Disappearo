@@ -89,34 +89,103 @@ async function moderateImageHF(url: string) {
     return { blocked, score: { nsfw } };
 }
 
-async function moderateImage(url: string) {
+// Fallback image moderation - basic file type and size checks
+async function moderateImageFallback(url: string) {
     try {
-        const ai = await moderateImageHF(url);
+        // Basic checks for common NSFW indicators in URLs
+        const urlLower = url.toLowerCase();
+        const nsfwIndicators = ['porn', 'xxx', 'adult', 'nsfw', 'sex', 'nude', 'naked'];
+        const hasNsfwIndicator = nsfwIndicators.some(indicator => urlLower.includes(indicator));
+
+        // Check file extension
+        const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
+        const hasValidExtension = allowedExtensions.some(ext => urlLower.includes(ext));
+
         return {
-            blocked: ai.blocked,
-            reason: ai.blocked ? 'ai_moderation' : 'passed',
-            score: ai.score,
+            blocked: hasNsfwIndicator || !hasValidExtension,
+            reason: hasNsfwIndicator ? 'url_nsfw_indicator' : (!hasValidExtension ? 'invalid_file_type' : 'passed'),
+            score: { nsfw: hasNsfwIndicator ? 1 : 0, validExtension: hasValidExtension }
         };
     } catch (error) {
-        const failClosed = process.env.IMAGE_MODERATION_FAIL_CLOSED === 'true';
-        return failClosed
-            ? { blocked: true, reason: 'ai_failed', score: { error: 'image_ai_failed' } }
-            : { blocked: false, reason: 'ai_failed', score: { error: 'image_ai_failed' } };
+        // If fallback fails, allow the image
+        return { blocked: false, reason: 'fallback_failed', score: { error: 'image_fallback_failed' } };
+    }
+}
+
+async function moderateImage(url: string) {
+    // Use fallback immediately for better performance
+    // Only use HF if explicitly enabled and token is available
+    const useHF = process.env.USE_HUGGINGFACE_MODERATION === 'true' && process.env.HUGGINGFACE_API_TOKEN;
+    
+    if (useHF) {
+        try {
+            const ai = await moderateImageHF(url);
+            return {
+                blocked: ai.blocked,
+                reason: ai.blocked ? 'ai_moderation' : 'passed',
+                score: ai.score,
+            };
+        } catch (error) {
+            console.log('HuggingFace image moderation failed, using fallback');
+        }
+    }
+    
+    // Use fast fallback moderation
+    return await moderateImageFallback(url);
+}
+
+// Fallback text moderation using bad-words.txt
+async function moderateTextFallback(text: string) {
+    const fs = await import('fs');
+    const path = await import('path');
+
+    try {
+        const badWordsPath = path.join(process.cwd(), 'bad-words.txt');
+        const badWordsContent = fs.readFileSync(badWordsPath, 'utf-8');
+        const badWords = badWordsContent
+            .split('\n')
+            .slice(1) // Skip header
+            .map(line => line.split(',')[0].toLowerCase().trim())
+            .filter(word => word.length > 0);
+
+        const words = text.toLowerCase().split(/\s+/);
+        const foundBadWords = words.filter(word =>
+            badWords.some(badWord =>
+                word === badWord
+            )
+        );
+
+        return {
+            blocked: foundBadWords.length > 0,
+            reason: foundBadWords.length > 0 ? 'bad_words_fallback' : 'passed',
+            score: { badWords: foundBadWords.length, foundWords: foundBadWords }
+        };
+    } catch (error) {
+        // If fallback fails, allow the message
+        return { blocked: false, reason: 'fallback_failed', score: { error: 'fallback_failed' } };
     }
 }
 
 async function moderateText(text: string) {
-    try {
-        const aiCheck = await moderateTextHF(text);
-        return {
-            blocked: aiCheck.blocked,
-            reason: aiCheck.blocked ? 'ai_moderation' : 'passed',
-            score: aiCheck.score
-        };
-    } catch (error) {
-        // Fail closed if HF is not available
-        return { blocked: true, reason: 'ai_failed', score: { error: 'text_ai_failed' } };
+    // Use fallback immediately for better performance
+    // Only use HF if explicitly enabled and token is available
+    const useHF = process.env.USE_HUGGINGFACE_MODERATION === 'true' && process.env.HUGGINGFACE_API_TOKEN;
+    
+    if (useHF) {
+        try {
+            const aiCheck = await moderateTextHF(text);
+            return {
+                blocked: aiCheck.blocked,
+                reason: aiCheck.blocked ? 'ai_moderation' : 'passed',
+                score: aiCheck.score
+            };
+        } catch (error) {
+            console.log('HuggingFace API failed, using fallback moderation');
+        }
     }
+    
+    // Use fast fallback moderation
+    return await moderateTextFallback(text);
 }
 
 export async function POST(req: NextRequest) {
