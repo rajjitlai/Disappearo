@@ -90,23 +90,18 @@ export async function deleteMessage(messageId: string) {
 }
 
 export async function uploadImage(file: File) {
-    // Basic upload; we will fetch a tokenized view URL for rendering
-    const created = await storage.createFile(ids.bucket, ID.unique(), file);
+    // Upload with explicit permissions: any authenticated user can read; owner can write
+    let ownerId: string | null = null;
+    try { const me = await account.get(); ownerId = me.$id; } catch { }
+    const permissions = ownerId
+        ? [Permission.read(Role.users()), Permission.write(Role.user(ownerId))]
+        : [Permission.read(Role.users())];
+    const created = await storage.createFile(ids.bucket, ID.unique(), file, permissions);
     try {
-        const tokenObj = await storage.createFileToken(ids.bucket, created.$id);
-        const token = (tokenObj as any).token || (tokenObj as any).secret || (tokenObj as any).$id || '';
-        const base = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || '';
-        const project = process.env.NEXT_PUBLIC_APPWRITE_PROJECT || '';
-        const url = `${base}/storage/buckets/${ids.bucket}/files/${created.$id}/view?project=${project}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+        const url = storage.getFileView(ids.bucket, created.$id).toString();
         return { fileId: created.$id, url };
     } catch {
-        // Fallback to non-tokenized view
-        try {
-            const url = storage.getFileView(ids.bucket, created.$id).toString();
-            return { fileId: created.$id, url };
-        } catch {
-            return { fileId: created.$id, url: '' };
-        }
+        return { fileId: created.$id, url: '' };
     }
 }
 
@@ -212,7 +207,7 @@ export async function deleteAllSessionMessages(sessionId: string) {
     ]);
     for (const doc of list.documents) {
         try {
-            const text = (doc as any).text as string | undefined;
+            const text = (doc as unknown as { text?: string }).text;
             if (text && typeof text === 'string' && text.startsWith('__image__|')) {
                 const parts = text.split('|');
                 const fileId = parts[2];

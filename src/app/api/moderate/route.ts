@@ -54,9 +54,16 @@ async function hfRequest(model: string, payload: Record<string, unknown>) {
 
 async function moderateTextHF(text: string) {
     const data = await hfRequest('unitary/unbiased-toxic-roberta', { inputs: text });
-    const items = Array.isArray(data) ? (Array.isArray(data[0]) ? data[0] : data) : [] as any;
+    let items: Array<{ label?: string; score?: number }> = [];
+    if (Array.isArray(data)) {
+        const first = (data as Array<unknown>)[0];
+        if (Array.isArray(first)) {
+            items = first as Array<{ label?: string; score?: number }>;
+        } else {
+            items = data as Array<{ label?: string; score?: number }>;
+        }
+    }
     const find = (label: string) => {
-        if (!Array.isArray(items)) return 0;
         const it = items.find((x: { label?: string; score?: number }) => (x.label || '').toLowerCase().includes(label));
         return Number(it?.score ?? 0);
     };
@@ -69,14 +76,14 @@ async function moderateTextHF(text: string) {
 // Image moderation via HF NSFW detector
 async function moderateImageHF(url: string) {
     const data = await hfRequest('Falconsai/nsfw_image_detection', { inputs: url });
-    const items = Array.isArray(data) ? data : (data as any)?.[0] || [];
+    const items: Array<{ label?: string; score?: number } | [string, number]> = Array.isArray(data)
+        ? (data as Array<{ label?: string; score?: number } | [string, number]>)
+        : ((data as unknown as Array<{ label?: string; score?: number } | [string, number]>) || []);
     let nsfw = 0;
-    if (Array.isArray(items)) {
-        for (const it of items as any[]) {
-            const label = (it.label || it?.[0])?.toString().toLowerCase();
-            const score = Number(it.score || it?.[1] || 0);
-            if (label?.includes('nsfw') || label?.includes('porn')) nsfw = Math.max(nsfw, score);
-        }
+    for (const it of items) {
+        const label = (Array.isArray(it) ? it[0] : it.label)?.toString().toLowerCase();
+        const score = Number(Array.isArray(it) ? it[1] : it.score || 0);
+        if (label?.includes('nsfw') || label?.includes('porn')) nsfw = Math.max(nsfw, score);
     }
     const blocked = nsfw >= 0.8;
     return { blocked, score: { nsfw } };
@@ -124,7 +131,6 @@ export async function POST(req: NextRequest) {
                 ok: !res.blocked,
                 reason: res.reason,
                 score: res.score,
-                foundWords: res.foundWords || []
             });
         }
         if (body.type === 'image') {

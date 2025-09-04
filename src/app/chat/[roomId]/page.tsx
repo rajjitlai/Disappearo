@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAuth } from '@/app/state/AuthContext';
 import { useParams, useRouter } from 'next/navigation';
-import { client, ids, getOrCreateProfile, getCurrentUser, sendMessage, listMessages, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike } from '@/app/lib/appwrite';
+import { client, ids, getOrCreateProfile, getCurrentUser, sendMessage, listMessages, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike, deleteImageFile } from '@/app/lib/appwrite';
 import toast from 'react-hot-toast';
 import Image from 'next/image';
 
@@ -231,13 +231,13 @@ export default function ChatPage() {
         try {
             await sendMessage(roomId as string, profile.handle, content);
             setText('');
-        } catch (e) {
+        } catch {
             // If initial send fails (e.g., transient disconnect), retry once after a short delay
             await new Promise((r) => setTimeout(r, 500));
             try {
                 await sendMessage(roomId as string, profile.handle, content);
                 setText('');
-            } catch (err) {
+            } catch {
                 toast.error('Failed to send message. Please try again.');
             }
         } finally {

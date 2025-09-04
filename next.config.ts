@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import type { RemotePattern } from 'next/dist/shared/lib/image-config';
 
 // Dynamically include Appwrite endpoint host for Next/Image remote loader
 const appwriteEndpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "";
@@ -7,67 +8,32 @@ try {
   if (appwriteEndpoint) appwriteHost = new URL(appwriteEndpoint).hostname;
 } catch { }
 
+const makePattern = (hostname: string): RemotePattern => ({
+  protocol: 'https',
+  hostname,
+  port: '',
+  pathname: '/**',
+});
+
 const nextConfig: NextConfig = {
   output: "standalone",
   images: {
     remotePatterns: [
-      ...(appwriteHost
-        ? [{ protocol: 'https', hostname: appwriteHost, port: '', pathname: '/**' }]
-        : []),
-      // Appwrite Cloud default host
-      { protocol: 'https', hostname: 'cloud.appwrite.io', port: '', pathname: '/**' },
-      // Common region subdomains
-      { protocol: 'https', hostname: 'nyc.cloud.appwrite.io', port: '', pathname: '/**' },
-      { protocol: 'https', hostname: 'sgp.cloud.appwrite.io', port: '', pathname: '/**' },
-      { protocol: 'https', hostname: 'fra.cloud.appwrite.io', port: '', pathname: '/**' },
-      {
-        protocol: 'https',
-        hostname: 'rjsblog.in',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'rajjitlaishram.netlify.app',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'github.com',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'linkedin.com',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'twitter.com',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'dev.to',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'medium.com',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'rajjitlaishram.netlify.app',
-        port: '',
-        pathname: '/**',
-      },
+      ...(appwriteHost ? [makePattern(appwriteHost)] : []),
+      // Appwrite Cloud default + regions
+      makePattern('cloud.appwrite.io'),
+      makePattern('nyc.cloud.appwrite.io'),
+      makePattern('sgp.cloud.appwrite.io'),
+      makePattern('fra.cloud.appwrite.io'),
+      // Other hosts used in the app
+      makePattern('rjsblog.in'),
+      makePattern('rajjitlaishram.netlify.app'),
+      makePattern('github.com'),
+      makePattern('linkedin.com'),
+      makePattern('twitter.com'),
+      makePattern('dev.to'),
+      makePattern('medium.com'),
+      makePattern('rajjitlaishram.netlify.app'),
     ],
   },
 };

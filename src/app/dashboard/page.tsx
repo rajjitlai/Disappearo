@@ -191,13 +191,13 @@ export default function DashboardPage() {
                 if (res?.unbanned) {
                     toast.success('Your account has been automatically unbanned. Strikes have been reset.');
                     // res.profile may be a generic Models.Document; update minimal flags
-                    setProfile({
-                        ...(profile as any),
+                    setProfile((prev) => prev ? ({
+                        ...prev,
                         banned: false,
                         strikes: 0,
-                        bannedAt: null as unknown as string,
-                        lastStrikeAt: null as unknown as string,
-                    } as ProfileDoc);
+                        bannedAt: undefined,
+                        lastStrikeAt: undefined,
+                    } as ProfileDoc) : prev);
                 }
             } catch { }
         })();
@@ -210,9 +210,15 @@ export default function DashboardPage() {
         const unsubscribe = client.subscribe(channel, (res) => {
             const isUpdate = res.events?.some((e: string) => e.endsWith('.update'));
             if (!isUpdate) return;
-            const payload = res.payload as unknown as ProfileDoc;
-            // Update banned/strikes state live
-            setProfile((prev) => ({ ...(prev as any), ...(payload as any) } as ProfileDoc));
+            const payload = res.payload as unknown as { banned?: boolean; strikes?: number; bannedAt?: string | null; lastStrikeAt?: string | null };
+            // Update banned/strikes state live (typed)
+            setProfile((prev) => prev ? ({
+                ...prev,
+                banned: payload.banned ?? prev.banned,
+                strikes: (payload.strikes as number | undefined) ?? prev.strikes,
+                bannedAt: (payload.bannedAt as string | undefined) ?? prev.bannedAt,
+                lastStrikeAt: (payload.lastStrikeAt as string | undefined) ?? prev.lastStrikeAt,
+            } as ProfileDoc) : prev);
         });
         return () => {
             try { unsubscribe(); } catch { }
