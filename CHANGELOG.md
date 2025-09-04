@@ -37,11 +37,9 @@ All notable changes to this project during the Appwrite Sites Hackathon 2025 wil
 - Hosting fixes applied; deployment stabilized
 - Removed unused assets to reduce bundle size
 - Dashboard loading improvements
-
-## 2025-09-05
-
 - Documentation suite added under `docs/`
 - Deployment instructions prepared for Appwrite Sites
 - README updated with live links (live: <https://disappearo.appwrite.network>, repo: <https://github.com/rajjitlai/Disappearo>)
 - Added author/credits, tools used (ChatGPT, Cursor AI), and Canva logo credit
 - Embedded Home screenshot in README; documented assets in `docs/ASSETS.md` (Home, Dashboard, Chat)
+- More bugs fixes and improvements testing
