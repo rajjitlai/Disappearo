@@ -42,7 +42,7 @@ function MagicCallbackContent() {
                 try { await refresh(); } catch { }
                 try {
                     const secure = location.protocol === 'https:' ? '; secure' : '';
-                    document.cookie = `d_auth=1; path=/; max-age=86400; samesite=lax${secure}`;
+                    document.cookie = `d_auth=1; path=/; max-age=${7 * 24 * 60 * 60}; samesite=lax${secure}`;
                 } catch { }
                 router.replace('/dashboard');
             } catch (e: unknown) {

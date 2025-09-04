@@ -48,6 +48,7 @@ export default function ChatPage() {
     const inactivityTimerRef = useRef<null | ReturnType<typeof setInterval>>(null);
     const router = useRouter();
     const [exporting, setExporting] = useState(false);
+    const [uploading, setUploading] = useState(false);
     const sendingRef = useRef(false);
     const realtimeReadyRef = useRef(false);
     const lastDownloadedReqId = useRef<string | null>(null);
@@ -251,7 +252,14 @@ export default function ChatPage() {
     async function handleImageSelected(e: React.ChangeEvent<HTMLInputElement>) {
         const f = e.target.files?.[0];
         if (!f || !profile) return;
+        const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB
+        if (f.size > MAX_IMAGE_BYTES) {
+            toast.error('Image is larger than 10MB');
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            return;
+        }
         try {
+            setUploading(true);
             const { url, fileId } = await uploadImage(f);
             if (url) {
                 // Attempt image moderation
@@ -262,9 +270,12 @@ export default function ChatPage() {
                         body: JSON.stringify({ type: 'image', url }),
                     });
 
-                    if (mod.ok) {
-                        const modResult = await mod.json();
-                        if (!modResult.ok) {
+                    const modResult = await mod.json();
+                    if (!modResult.ok) {
+                        // If backend failed closed due to AI outage (reason === 'ai_failed'), allow image gracefully
+                        if (modResult.reason !== 'ai_failed') {
+                            // Block: delete uploaded file to avoid storage of unsafe content
+                            try { await deleteImageFile(fileId); } catch { }
                             const res = await incrementStrike(profile.$id);
                             if (res.banned) {
                                 toast.error('Banned due to repeated violations. Your account has been suspended.');
@@ -277,14 +288,10 @@ export default function ChatPage() {
                             toast.error(`Image blocked. Strikes: ${res.strikes}/3`);
                             return;
                         }
-                    } else {
-                        // If moderation API fails, log it but allow the image
-                        console.warn('Image moderation API failed, allowing image');
-                        toast('Image uploaded (moderation unavailable)');
                     }
                 } catch (modError) {
-                    // If moderation completely fails, allow the image
-                    console.warn('Image moderation failed, allowing image:', modError);
+                    // If moderation completely fails, block image to be safe
+                    console.warn('Image moderation failed:', modError);
                     toast('Image uploaded (moderation unavailable)');
                 }
             }
@@ -298,6 +305,7 @@ export default function ChatPage() {
             const error = err as Error;
             toast.error(error?.message || 'Failed to upload image');
         } finally {
+            setUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = '';
         }
     }
@@ -514,9 +522,17 @@ export default function ChatPage() {
 
     return (
         <div className="min-h-dvh flex flex-col bg-[var(--background)] text-[var(--foreground)]">
-            <header className="border-b border-[var(--border)] bg-[var(--card-background)]">
+            <header className="border-b border-[var(--border)] bg-[var(--card-background)] sticky top-0 z-10">
                 <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-                    <h1 className="font-semibold">Chat</h1>
+                    <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-full bg-blue-600/10 text-blue-700 dark:text-blue-200 grid place-items-center font-semibold">
+                            {profile?.handle?.slice(0, 1).toUpperCase()}
+                        </div>
+                        <div>
+                            <h1 className="font-semibold leading-none">Chat</h1>
+                            <p className="text-[10px] text-[var(--muted-foreground)]">Ephemeral • Private</p>
+                        </div>
+                    </div>
                     <div className="flex items-center gap-2">
                         <button
                             onClick={requestExport}
@@ -559,6 +575,13 @@ export default function ChatPage() {
                     </div>
                 </div>
             </header>
+
+            {/* Info notice */}
+            <div className="max-w-5xl mx-auto px-4 mt-2 text-[10px] sm:text-xs text-[var(--muted-foreground)]">
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--card-background)]/60 px-3 py-2">
+                    <span className="font-medium">Privacy notice:</span> Messages are ephemeral and private to participants, and will be cleared when the session exits. AI moderation may delay delivery briefly.
+                </div>
+            </div>
 
             {exportState.active && (
                 <div className="max-w-5xl mx-auto px-4 mt-3 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-900 dark:text-amber-100 p-3 flex items-center justify-between">
@@ -626,77 +649,91 @@ export default function ChatPage() {
                         }
                         const withinEditWindow = mine && ts ? (Date.now() - ts.getTime() <= 5 * 60 * 1000) : false;
                         return (
-                            <div
-                                key={msg.$id}
-                                className={`p-3 rounded-2xl max-w-xs shadow-sm ${mine
-                                    ? 'ml-auto bg-blue-600 dark:bg-blue-700 text-white'
-                                    : 'mr-auto bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700'
-                                    }`}
-                            >
-                                {isImage ? (
-                                    <div className="rounded-lg overflow-hidden">
-                                        <Image
-                                            src={imageUrl}
-                                            alt={imageName}
-                                            className="block w-full h-auto pointer-events-none select-none"
-                                            draggable={false}
-                                            onContextMenu={(ev) => ev.preventDefault()}
-                                        />
-                                    </div>
-                                ) : editingId === msg.$id ? (
-                                    <div className="space-y-2">
-                                        <input
-                                            className="w-full rounded-md px-2 py-1 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                            value={editingText}
-                                            onChange={(e) => setEditingText(e.target.value)}
-                                        />
-                                        <div className="flex gap-2">
-                                            <button
-                                                className={`text-[11px] rounded px-2 py-1 ${mine
-                                                    ? 'bg-white/20 text-white hover:bg-white/30'
-                                                    : 'bg-blue-600 text-white hover:bg-blue-700'
-                                                    } transition-colors`}
-                                                onClick={async () => {
-                                                    const trimmed = editingText.trim();
-                                                    if (!trimmed) { setEditingId(null); return; }
-                                                    await updateMessage(msg.$id, { text: trimmed });
-                                                    setEditingId(null);
-                                                    setEditingText('');
-                                                }}
-                                            >
-                                                Save
-                                            </button>
-                                            <button
-                                                className={`text-[11px] rounded px-2 py-1 ${mine
-                                                    ? 'bg-white/10 text-white hover:bg-white/20'
-                                                    : 'bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-gray-100 hover:bg-gray-400 dark:hover:bg-gray-500'
-                                                    } transition-colors`}
-                                                onClick={() => { setEditingId(null); setEditingText(''); }}
-                                            >
-                                                Cancel
-                                            </button>
+                            <div key={msg.$id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`flex items-end gap-2 max-w-[80%]`}>
+                                    {!mine && (
+                                        <div className="h-7 w-7 rounded-full bg-gray-300 dark:bg-gray-700 grid place-items-center text-[10px] text-gray-700 dark:text-gray-300">
+                                            {msg.sender.slice(0, 1).toUpperCase()}
+                                        </div>
+                                    )}
+                                    <div className={`p-3 rounded-2xl shadow-sm ${mine
+                                        ? 'bg-blue-600 dark:bg-blue-700 text-white'
+                                        : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700'
+                                        }`}>
+                                        {isImage ? (
+                                            <div className="rounded-lg overflow-hidden">
+                                                <Image
+                                                    src={imageUrl}
+                                                    alt={imageName}
+                                                    width={640}
+                                                    height={480}
+                                                    className="block w-full h-auto pointer-events-none select-none"
+                                                    draggable={false}
+                                                    onContextMenu={(ev) => ev.preventDefault()}
+                                                    unoptimized
+                                                />
+                                            </div>
+                                        ) : editingId === msg.$id ? (
+                                            <div className="space-y-2">
+                                                <input
+                                                    className="w-full rounded-md px-2 py-1 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                                    value={editingText}
+                                                    onChange={(e) => setEditingText(e.target.value)}
+                                                />
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        className={`text-[11px] rounded px-2 py-1 ${mine
+                                                            ? 'bg-white/20 text-white hover:bg-white/30'
+                                                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                                                            } transition-colors`}
+                                                        onClick={async () => {
+                                                            const trimmed = editingText.trim();
+                                                            if (!trimmed) { setEditingId(null); return; }
+                                                            await updateMessage(msg.$id, { text: trimmed });
+                                                            setEditingId(null);
+                                                            setEditingText('');
+                                                        }}
+                                                    >
+                                                        Save
+                                                    </button>
+                                                    <button
+                                                        className={`text-[11px] rounded px-2 py-1 ${mine
+                                                            ? 'bg-white/10 text-white hover:bg-white/20'
+                                                            : 'bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-gray-100 hover:bg-gray-400 dark:hover:bg-gray-500'
+                                                            } transition-colors`}
+                                                        onClick={() => { setEditingId(null); setEditingText(''); }}
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="text-sm whitespace-pre-wrap break-words">{msg.text}</div>
+                                        )}
+                                        <div className={`text-[10px] mt-2 flex items-center gap-2 ${mine
+                                            ? 'text-blue-100/80'
+                                            : 'text-gray-500 dark:text-gray-400'
+                                            }`}>
+                                            <span className="truncate max-w-[120px]">{msg.sender}</span>
+                                            {time && <span aria-hidden>•</span>}
+                                            {time && <time dateTime={ts!.toISOString()}>{time}</time>}
+                                            {withinEditWindow && !isImage && !isControl && editingId !== msg.$id && (
+                                                <button
+                                                    className={`ml-2 underline hover:no-underline transition-all ${mine
+                                                        ? 'text-blue-100 hover:text-white'
+                                                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                                                        }`}
+                                                    onClick={() => { setEditingId(msg.$id); setEditingText(t); }}
+                                                >
+                                                    Edit
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
-                                ) : (
-                                    <div className="text-sm whitespace-pre-wrap break-words">{msg.text}</div>
-                                )}
-                                <div className={`text-[10px] mt-2 flex items-center gap-2 ${mine
-                                    ? 'text-blue-100/80'
-                                    : 'text-gray-500 dark:text-gray-400'
-                                    }`}>
-                                    <span>{msg.sender}</span>
-                                    {time && <span aria-hidden>•</span>}
-                                    {time && <time dateTime={ts!.toISOString()}>{time}</time>}
-                                    {withinEditWindow && !isImage && !isControl && editingId !== msg.$id && (
-                                        <button
-                                            className={`ml-2 underline hover:no-underline transition-all ${mine
-                                                ? 'text-blue-100 hover:text-white'
-                                                : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                                                }`}
-                                            onClick={() => { setEditingId(msg.$id); setEditingText(t); }}
-                                        >
-                                            Edit
-                                        </button>
+                                    {mine && (
+                                        <div className="h-7 w-7 rounded-full bg-blue-600/10 text-blue-700 dark:text-blue-200 grid place-items-center text-[10px]">
+                                            {profile?.handle?.slice(0, 1).toUpperCase()}
+                                        </div>
                                     )}
                                 </div>
                             </div>
@@ -706,10 +743,10 @@ export default function ChatPage() {
                 </div>
             </main>
 
-            <footer className="border-t border-[var(--border)] bg-[var(--card-background)]">
+            <footer className="border-t border-[var(--border)] bg-[var(--card-background)] sticky bottom-0 z-10">
                 <div className="max-w-5xl mx-auto px-3 sm:px-4 py-3">
                     <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                        <div className="flex gap-2 items-center">
+                        <div className="flex gap-2 items-center w-full">
                             <input ref={fileInputRef} onChange={handleImageSelected} type="file" accept="image/*" className="hidden" />
                             <input
                                 ref={inputRef}
@@ -717,12 +754,13 @@ export default function ChatPage() {
                                 value={text}
                                 onChange={(e) => setText(e.target.value)}
                                 placeholder="Type a message..."
-                                className="flex-1 border border-[var(--border)] rounded-lg px-3 py-2 bg-[var(--input-background)] text-[var(--input-foreground)] placeholder-[var(--muted-foreground)] text-sm sm:text-base focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                                className="flex-1 border border-[var(--border)] rounded-full px-4 py-3 bg-[var(--input-background)] text-[var(--input-foreground)] placeholder-[var(--muted-foreground)] text-sm sm:text-base focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
                             />
                             <button
                                 onClick={handlePickImage}
-                                className="rounded-lg px-2 sm:px-3 py-2 border border-[var(--border)] text-xs sm:text-sm hover:bg-[var(--muted)] transition-colors"
+                                className="rounded-lg px-2 sm:px-3 py-2 border border-[var(--border)] text-xs sm:text-sm hover:bg-[var(--muted)] transition-colors disabled:opacity-50"
                                 title="Send an image"
+                                disabled={uploading}
                             >
                                 Image
                             </button>
@@ -735,7 +773,8 @@ export default function ChatPage() {
                             </button>
                             <button
                                 onClick={handleSend}
-                                className="bg-blue-600 dark:bg-blue-700 text-white px-3 sm:px-4 py-2 rounded-lg text-sm sm:text-base hover:bg-blue-700 dark:hover:bg-blue-800 transition-colors"
+                                className="bg-blue-600 dark:bg-blue-700 text-white px-3 sm:px-4 py-2 rounded-lg text-sm sm:text-base hover:bg-blue-700 dark:hover:bg-blue-800 transition-colors disabled:opacity-50"
+                                disabled={uploading}
                             >
                                 Send
                             </button>

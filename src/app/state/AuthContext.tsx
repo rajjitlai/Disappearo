@@ -28,7 +28,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (u) {
                 try {
                     const secure = location.protocol === 'https:' ? '; secure' : '';
-                    document.cookie = `d_auth=1; path=/; max-age=86400; samesite=lax${secure}`;
+                    // Extend cookie lifetime to 7 days
+                    document.cookie = `d_auth=1; path=/; max-age=${7 * 24 * 60 * 60}; samesite=lax${secure}`;
                 } catch (cookieError) {
                     console.warn('Failed to set d_auth cookie:', cookieError);
                 }
@@ -56,6 +57,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         refresh();
+        // Keep auth fresh on window focus and at a periodic interval
+        const onFocus = () => { refresh(); };
+        window.addEventListener('focus', onFocus);
+        const t = setInterval(() => { refresh(); }, 15 * 60 * 1000); // 15 minutes
+        return () => {
+            window.removeEventListener('focus', onFocus);
+            clearInterval(t);
+        };
     }, [refresh]);
 
     const signOut = useCallback(async () => {

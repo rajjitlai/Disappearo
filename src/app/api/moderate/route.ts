@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { databases, ids } from '@/app/lib/appwrite';
-import { Query } from 'appwrite';
 
 // Simple in-memory rate limiter per IP
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1m
@@ -18,41 +16,7 @@ function rateLimit(ip: string) {
     return { ok: true };
 }
 
-// Interface for bad words document
-interface BadWordDocument {
-    word: string;
-    category: string;
-    createdAt: string;
-}
-
-// Custom bad words filtering
-async function checkCustomBadWords(text: string): Promise<{ blocked: boolean; foundWords: string[] }> {
-    try {
-        const result = await databases.listDocuments(ids.db, ids.bad_words, [
-            Query.limit(100),
-        ]);
-
-        const badWords = result.documents.map((doc) => (doc as unknown as BadWordDocument).word.toLowerCase());
-        const textLower = text.toLowerCase();
-        const foundWords: string[] = [];
-
-        for (const word of badWords) {
-            if (textLower.includes(word)) {
-                foundWords.push(word);
-            }
-        }
-
-        return {
-            blocked: foundWords.length > 0,
-            foundWords
-        };
-    } catch {
-        return { blocked: false, foundWords: [] };
-    }
-}
-
-// Hugging Face only moderation (free tier friendly)
-// Set HUGGINGFACE_API_TOKEN in your environment
+// Text moderation: Hugging Face only
 
 type Body =
     | { type: 'text'; content: string }
@@ -63,20 +27,34 @@ type HFResponse = Array<{ label: string; score: number }> | { [key: string]: unk
 async function hfRequest(model: string, payload: Record<string, unknown>) {
     const token = process.env.HUGGINGFACE_API_TOKEN;
     if (!token) throw new Error('HUGGINGFACE_API_TOKEN not set');
-    const res = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-    });
-    if (!res.ok) throw new Error(`HF error ${res.status}`);
-    return res.json() as Promise<HFResponse>;
+    const timeoutMs = Number(process.env.HUGGINGFACE_TIMEOUT_MS || 7000);
+    const retries = Math.max(0, Number(process.env.HUGGINGFACE_RETRIES || 2));
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+        try {
+            const res = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: ctrl.signal,
+            });
+            clearTimeout(timer);
+            if (!res.ok) throw new Error(`HF error ${res.status}`);
+            return (await res.json()) as HFResponse;
+        } catch (err) {
+            clearTimeout(timer);
+            if (attempt === retries) throw err;
+            await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+        }
+    }
+    throw new Error('HF request failed');
 }
 
 async function moderateTextHF(text: string) {
-    // Unitary toxicity model
     const data = await hfRequest('unitary/unbiased-toxic-roberta', { inputs: text });
-    // data is array of labels with scores; find toxic score
-    const items = Array.isArray(data) ? data[0] : Array.isArray(data?.[0]) ? data[0] : [];
+    const items = Array.isArray(data) ? (Array.isArray(data[0]) ? data[0] : data) : [] as any;
     const find = (label: string) => {
         if (!Array.isArray(items)) return 0;
         const it = items.find((x: { label?: string; score?: number }) => (x.label || '').toLowerCase().includes(label));
@@ -88,71 +66,39 @@ async function moderateTextHF(text: string) {
     return { blocked, score: { toxicity, hate } };
 }
 
+// Image moderation via HF NSFW detector
 async function moderateImageHF(url: string) {
-    try {
-        const data = await hfRequest('Falconsai/nsfw_image_detection', { inputs: url });
-        const items = Array.isArray(data) ? data : (data?.[0] || []);
-        let nsfw = 0;
-        if (Array.isArray(items)) {
-            for (const it of items) {
-                const label = (it.label || it?.[0])?.toString().toLowerCase();
-                const score = Number(it.score || it?.[1] || 0);
-                if (label?.includes('nsfw') || label?.includes('porn')) nsfw = Math.max(nsfw, score);
-            }
+    const data = await hfRequest('Falconsai/nsfw_image_detection', { inputs: url });
+    const items = Array.isArray(data) ? data : (data as any)?.[0] || [];
+    let nsfw = 0;
+    if (Array.isArray(items)) {
+        for (const it of items as any[]) {
+            const label = (it.label || it?.[0])?.toString().toLowerCase();
+            const score = Number(it.score || it?.[1] || 0);
+            if (label?.includes('nsfw') || label?.includes('porn')) nsfw = Math.max(nsfw, score);
         }
-        const blocked = nsfw >= 0.8;
-        return { blocked, score: { nsfw } };
-    } catch (error) {
-        // If image moderation fails, allow the image (fail open for safety)
-        console.warn('Image moderation failed, allowing image:', error);
-        return { blocked: false, score: { nsfw: 0, error: 'moderation_failed' } };
     }
+    const blocked = nsfw >= 0.8;
+    return { blocked, score: { nsfw } };
 }
 
-// Enhanced image moderation with comprehensive fallback
 async function moderateImage(url: string) {
-    // Check if image moderation is disabled via environment variable
-    if (process.env.DISABLE_IMAGE_MODERATION === 'true') {
-        console.log('Image moderation disabled via environment variable');
-        return {
-            blocked: false,
-            reason: 'disabled',
-            score: { disabled: true }
-        };
-    }
-
     try {
-        const aiCheck = await moderateImageHF(url);
+        const ai = await moderateImageHF(url);
         return {
-            blocked: aiCheck.blocked,
-            reason: aiCheck.blocked ? 'ai_moderation' : 'passed',
-            score: aiCheck.score
+            blocked: ai.blocked,
+            reason: ai.blocked ? 'ai_moderation' : 'passed',
+            score: ai.score,
         };
     } catch (error) {
-        // If AI moderation fails completely, allow the image
-        console.warn('Image moderation completely failed, allowing image:', error);
-        return {
-            blocked: false,
-            reason: 'ai_failed',
-            score: { error: 'complete_failure' }
-        };
+        const failClosed = process.env.IMAGE_MODERATION_FAIL_CLOSED === 'true';
+        return failClosed
+            ? { blocked: true, reason: 'ai_failed', score: { error: 'image_ai_failed' } }
+            : { blocked: false, reason: 'ai_failed', score: { error: 'image_ai_failed' } };
     }
 }
 
-// Enhanced text moderation combining custom bad words and AI
 async function moderateText(text: string) {
-    // First check custom bad words
-    const customCheck = await checkCustomBadWords(text);
-    if (customCheck.blocked) {
-        return {
-            blocked: true,
-            reason: 'custom_bad_words',
-            foundWords: customCheck.foundWords,
-            score: { custom: 1.0 }
-        };
-    }
-
-    // Then check with AI moderation
     try {
         const aiCheck = await moderateTextHF(text);
         return {
@@ -161,13 +107,8 @@ async function moderateText(text: string) {
             score: aiCheck.score
         };
     } catch (error) {
-        // If AI moderation fails, fall back to custom words only
-        console.warn('AI moderation failed, using custom words only:', error);
-        return {
-            blocked: false,
-            reason: 'ai_failed',
-            score: { custom: 0.0 }
-        };
+        // Fail closed if HF is not available
+        return { blocked: true, reason: 'ai_failed', score: { error: 'text_ai_failed' } };
     }
 }
 

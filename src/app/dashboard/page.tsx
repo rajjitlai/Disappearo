@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { getOrCreateProfile, ids, databases, client, clearAllChatRequests, getProfileWithUnbanCheck } from '@/app/lib/appwrite';
+import { useEffect, useState, useRef } from 'react';
+import { getOrCreateProfile, ids, databases, client, clearAllChatRequests, getProfileWithUnbanCheck, deleteAllSessionMessages, deleteSession } from '@/app/lib/appwrite';
 import { useAuth } from '@/app/state/AuthContext';
 import { useRouter } from 'next/navigation';
 import { ID, Query, Models } from 'appwrite';
@@ -34,6 +34,9 @@ export default function DashboardPage() {
     const [targetId, setTargetId] = useState('');
     const [requests, setRequests] = useState<ChatRequestDoc[]>([]);
     const [outgoing, setOutgoing] = useState<ChatRequestDoc[]>([]);
+    const [banRemainingMs, setBanRemainingMs] = useState<number>(0);
+    // suppress auto-navigation when clearing outgoing (realtime may emit 'accepted')
+    const suppressNavigateRef = useRef(false);
 
     // send a chat request
     async function sendRequest() {
@@ -164,6 +167,58 @@ export default function DashboardPage() {
         }
     };
 
+    // Live ban countdown timer (updates every second when banned)
+    useEffect(() => {
+        if (!profile?.banned || !profile?.bannedAt) { setBanRemainingMs(0); return; }
+        const compute = () => {
+            const bannedTime = new Date(profile.bannedAt || 0).getTime();
+            const banDuration = 10 * 60 * 1000; // 10 minutes
+            const remaining = Math.max(0, bannedTime + banDuration - Date.now());
+            setBanRemainingMs(remaining);
+        };
+        compute();
+        const t = setInterval(compute, 1000);
+        return () => clearInterval(t);
+    }, [profile?.banned, profile?.bannedAt]);
+
+    // Auto-refresh unban status when countdown finishes
+    useEffect(() => {
+        if (!profile?.banned) return;
+        if (banRemainingMs > 0) return;
+        (async () => {
+            try {
+                const res = await getProfileWithUnbanCheck(profile.$id);
+                if (res?.unbanned) {
+                    toast.success('Your account has been automatically unbanned. Strikes have been reset.');
+                    // res.profile may be a generic Models.Document; update minimal flags
+                    setProfile({
+                        ...(profile as any),
+                        banned: false,
+                        strikes: 0,
+                        bannedAt: null as unknown as string,
+                        lastStrikeAt: null as unknown as string,
+                    } as ProfileDoc);
+                }
+            } catch { }
+        })();
+    }, [banRemainingMs, profile]);
+
+    // Realtime listener for profile unban updates
+    useEffect(() => {
+        if (!profile?.$id) return;
+        const channel = `databases.${ids.db}.collections.${ids.profile}.documents.${profile.$id}`;
+        const unsubscribe = client.subscribe(channel, (res) => {
+            const isUpdate = res.events?.some((e: string) => e.endsWith('.update'));
+            if (!isUpdate) return;
+            const payload = res.payload as unknown as ProfileDoc;
+            // Update banned/strikes state live
+            setProfile((prev) => ({ ...(prev as any), ...(payload as any) } as ProfileDoc));
+        });
+        return () => {
+            try { unsubscribe(); } catch { }
+        };
+    }, [profile?.$id]);
+
     // fetch my incoming pending requests
     useEffect(() => {
         if (!profile) return;
@@ -262,7 +317,7 @@ export default function DashboardPage() {
                         return [...others, doc];
                     });
                     // auto-join when accepted by the other party → request id is session id
-                    if (doc.status === 'accepted') {
+                    if (doc.status === 'accepted' && !suppressNavigateRef.current) {
                         router.push(`/chat/${doc.$id}`);
                     }
                 }
@@ -297,12 +352,23 @@ export default function DashboardPage() {
         if (!ok) return;
 
         try {
-            // Update all outgoing requests to cancelled status
+            suppressNavigateRef.current = true;
+            // For all my outgoing requests:
             for (const req of outgoing) {
-                if (req.status === 'pending') {
-                    await databases.updateDocument(ids.db, ids.chatrequests, req.$id, {
-                        status: 'cancelled',
-                    });
+                // If a request created a chat session (accepted), delete the session and its messages
+                if (req.status === 'accepted') {
+                    try {
+                        await deleteAllSessionMessages(req.$id);
+                    } catch { }
+                    try {
+                        await deleteSession(req.$id);
+                    } catch { }
+                }
+                // Cancel or delete the request itself
+                try {
+                    await databases.updateDocument(ids.db, ids.chatrequests, req.$id, { status: 'cancelled' });
+                } catch {
+                    try { await databases.deleteDocument(ids.db, ids.chatrequests, req.$id); } catch { }
                 }
             }
             setOutgoing([]);
@@ -310,6 +376,8 @@ export default function DashboardPage() {
         } catch (error) {
             console.error('Error clearing outgoing requests:', error);
             toast.error('Failed to clear some outgoing requests');
+        } finally {
+            setTimeout(() => { suppressNavigateRef.current = false; }, 600);
         }
     }
 
@@ -375,14 +443,25 @@ export default function DashboardPage() {
                                     <p className="text-sm text-[var(--muted-foreground)]">Share this ID to start chats</p>
                                 </div>
                             </div>
-                            <div className="font-mono text-lg font-bold text-blue-600 dark:text-blue-400 break-all bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl">
+                            <div className="font-mono text-lg font-bold text-blue-600 dark:text-blue-400 break-all bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl flex items-center justify-between gap-3">
                                 {loading ? (
                                     <div className="flex items-center gap-2">
                                         <div className="w-4 h-4 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin"></div>
                                         <span className="text-blue-400">Loading...</span>
                                     </div>
                                 ) : profile?.handle ? (
-                                    profile.handle
+                                    <>
+                                        <span className="truncate">{profile.handle}</span>
+                                        <button
+                                            onClick={async () => {
+                                                try { await navigator.clipboard.writeText(profile.handle); toast.success('Copied ID'); } catch { toast.error('Copy failed'); }
+                                            }}
+                                            className="text-xs font-normal bg-blue-600/10 hover:bg-blue-600/20 text-blue-700 dark:text-blue-200 px-2 py-1 rounded-md border border-blue-300/40"
+                                            aria-label="Copy Disappearo ID"
+                                        >
+                                            Copy
+                                        </button>
+                                    </>
                                 ) : (
                                     <span className="text-red-400">Failed to load</span>
                                 )}
@@ -446,7 +525,11 @@ export default function DashboardPage() {
                                             <span className="text-red-600 dark:text-red-400 text-sm font-medium">Account Banned</span>
                                         </div>
                                         <p className="text-red-600 dark:text-red-400 text-xs mt-1">
-                                            You will be automatically unbanned in 10 minutes
+                                            {banRemainingMs > 0 ? (
+                                                <>Unban in {String(Math.floor(banRemainingMs / 60000)).padStart(2, '0')}:{String(Math.floor((banRemainingMs % 60000) / 1000)).padStart(2, '0')}</>
+                                            ) : (
+                                                <>Unbanning soon…</>
+                                            )}
                                         </p>
                                     </div>
                                 ) : profile?.strikes && profile.strikes > 0 ? (

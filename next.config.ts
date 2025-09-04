@@ -16,6 +16,10 @@ const nextConfig: NextConfig = {
         : []),
       // Appwrite Cloud default host
       { protocol: 'https', hostname: 'cloud.appwrite.io', port: '', pathname: '/**' },
+      // Common region subdomains
+      { protocol: 'https', hostname: 'nyc.cloud.appwrite.io', port: '', pathname: '/**' },
+      { protocol: 'https', hostname: 'sgp.cloud.appwrite.io', port: '', pathname: '/**' },
+      { protocol: 'https', hostname: 'fra.cloud.appwrite.io', port: '', pathname: '/**' },
       {
         protocol: 'https',
         hostname: 'rjsblog.in',

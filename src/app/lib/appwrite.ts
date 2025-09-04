@@ -1,5 +1,5 @@
 'use client';
-import { Client, Account, Databases, ID, Query, Storage, Models } from 'appwrite';
+import { Client, Account, Databases, ID, Query, Storage, Models, Permission, Role } from 'appwrite';
 
 export const client = new Client()
     .setEndpoint(process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
@@ -90,13 +90,23 @@ export async function deleteMessage(messageId: string) {
 }
 
 export async function uploadImage(file: File) {
+    // Basic upload; we will fetch a tokenized view URL for rendering
     const created = await storage.createFile(ids.bucket, ID.unique(), file);
-    // Return a view URL (public if rules allow). Otherwise, the fileId can be used to fetch via SDK.
     try {
-        const url = storage.getFileView(ids.bucket, created.$id).toString();
+        const tokenObj = await storage.createFileToken(ids.bucket, created.$id);
+        const token = (tokenObj as any).token || (tokenObj as any).secret || (tokenObj as any).$id || '';
+        const base = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || '';
+        const project = process.env.NEXT_PUBLIC_APPWRITE_PROJECT || '';
+        const url = `${base}/storage/buckets/${ids.bucket}/files/${created.$id}/view?project=${project}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
         return { fileId: created.$id, url };
     } catch {
-        return { fileId: created.$id, url: '' };
+        // Fallback to non-tokenized view
+        try {
+            const url = storage.getFileView(ids.bucket, created.$id).toString();
+            return { fileId: created.$id, url };
+        } catch {
+            return { fileId: created.$id, url: '' };
+        }
     }
 }
 
@@ -201,6 +211,16 @@ export async function deleteAllSessionMessages(sessionId: string) {
         Query.limit(100),
     ]);
     for (const doc of list.documents) {
+        try {
+            const text = (doc as any).text as string | undefined;
+            if (text && typeof text === 'string' && text.startsWith('__image__|')) {
+                const parts = text.split('|');
+                const fileId = parts[2];
+                if (fileId) {
+                    try { await storage.deleteFile(ids.bucket, fileId); } catch { }
+                }
+            }
+        } catch { }
         // best-effort delete
         try {
             await databases.deleteDocument(ids.db, ids.messages, doc.$id);
@@ -208,6 +228,10 @@ export async function deleteAllSessionMessages(sessionId: string) {
             // ignore
         }
     }
+}
+
+export async function deleteImageFile(fileId: string) {
+    try { await storage.deleteFile(ids.bucket, fileId); } catch { }
 }
 
 export async function deleteSession(sessionId: string) {
