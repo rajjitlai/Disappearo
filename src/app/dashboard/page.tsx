@@ -178,18 +178,20 @@ export default function DashboardPage() {
         load();
     }, [profile]);
 
-    // fetch my outgoing requests (pending or accepted)
+    // fetch my outgoing requests (pending or accepted) in parallel
     useEffect(() => {
         if (!profile) return;
 
         const load = async () => {
-            const pending = await databases.listDocuments(ids.db, ids.chatrequests, [
-                Query.equal('fromId', profile.handle),
-                Query.equal('status', 'pending'),
-            ]);
-            const accepted = await databases.listDocuments(ids.db, ids.chatrequests, [
-                Query.equal('fromId', profile.handle),
-                Query.equal('status', 'accepted'),
+            const [pending, accepted] = await Promise.all([
+                databases.listDocuments(ids.db, ids.chatrequests, [
+                    Query.equal('fromId', profile.handle),
+                    Query.equal('status', 'pending'),
+                ]),
+                databases.listDocuments(ids.db, ids.chatrequests, [
+                    Query.equal('fromId', profile.handle),
+                    Query.equal('status', 'accepted'),
+                ]),
             ]);
             setOutgoing([...(pending.documents as unknown as ChatRequestDoc[]), ...(accepted.documents as unknown as ChatRequestDoc[])]);
         };

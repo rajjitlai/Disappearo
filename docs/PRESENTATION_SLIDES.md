@@ -311,7 +311,7 @@ src/
 - **App Router**: Latest routing system
 - **Image Optimization**: Next.js image component
 - **Code Splitting**: Automatic bundle optimization
-
+a
 ### Appwrite Benefits
 
 - **Global CDN**: Fast worldwide delivery

@@ -321,10 +321,3 @@ This project was built for the Appwrite Sites Hackathon 2025. While the hackatho
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🏆 Hackathon Submission
-
-This project was built for the **Appwrite Sites Hackathon 2025**. For full submission details (judging criteria, deployment notes, social post templates), see:
-
-- `docs/SUBMISSION_SUMMARY.md`
-- Hackathon site: <https://hackathon.appwrite.network/>

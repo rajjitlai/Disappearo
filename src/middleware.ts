@@ -14,13 +14,17 @@ export function middleware(req: NextRequest) {
     res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     // Basic CSP (adjust for images/buckets/providers)
     const appwrite = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || '';
+    const huggingface = 'https://api-inference.huggingface.co';
     const csp = [
         "default-src 'self'",
+        // Allow inline due to Next/font and early theme script; avoid remote third-party scripts
         "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
         "style-src 'self' 'unsafe-inline' fonts.googleapis.com",
         "font-src 'self' fonts.gstatic.com",
-        `img-src 'self' data: blob: ${appwrite} *`,
-        `connect-src 'self' ${appwrite} *`,
+        // Images from self, data/blob, and Appwrite storage/view URLs; allow https fallback but avoid wildcard hosts
+        `img-src 'self' data: blob: ${appwrite} https:`,
+        // Network calls to Appwrite (https/wss) and HuggingFace; allow https for fonts and Next data
+        `connect-src 'self' ${appwrite} ${huggingface} https: wss:`,
         "frame-ancestors 'none'",
     ].join('; ');
     res.headers.set('Content-Security-Policy', csp);

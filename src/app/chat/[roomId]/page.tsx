@@ -48,6 +48,8 @@ export default function ChatPage() {
     const inactivityTimerRef = useRef<null | ReturnType<typeof setInterval>>(null);
     const router = useRouter();
     const [exporting, setExporting] = useState(false);
+    const sendingRef = useRef(false);
+    const realtimeReadyRef = useRef(false);
     const lastDownloadedReqId = useRef<string | null>(null);
 
     // load user + profile
@@ -98,6 +100,7 @@ export default function ChatPage() {
         const unsubscribe = client.subscribe(
             `databases.${ids.db}.collections.${ids.messages}.documents`,
             (res) => {
+                realtimeReadyRef.current = true;
                 const doc: Message = res.payload as Message;
                 if (doc.sessionId === roomId) {
                     const isCreate = res.events.some((e: string) => e.endsWith('.create'));
@@ -123,6 +126,31 @@ export default function ChatPage() {
             unsubscribe();
         };
     }, [roomId]);
+
+    // subscribe to session lifecycle; if session is deleted by the other participant, exit cleanly
+    useEffect(() => {
+        if (!roomId) return;
+        const channel = `databases.${ids.db}.collections.${ids.chatsessions}.documents.${roomId}`;
+        const unsubscribe = client.subscribe(channel, (res) => {
+            const wasDeleted = res.events?.some((e: string) => e.endsWith('.delete'));
+            if (wasDeleted) {
+                // other participant ended the chat; clean local timers and redirect
+                if (unsubRef.current) {
+                    try { unsubRef.current(); } catch { }
+                    unsubRef.current = null;
+                }
+                if (inactivityTimerRef.current) {
+                    clearInterval(inactivityTimerRef.current);
+                    inactivityTimerRef.current = null;
+                }
+                toast('Chat ended by the other participant');
+                router.replace('/dashboard');
+            }
+        });
+        return () => {
+            try { unsubscribe(); } catch { }
+        };
+    }, [roomId, router]);
 
     // auto-scroll
     useEffect(() => {
@@ -181,6 +209,8 @@ export default function ChatPage() {
     // send new message
     async function handleSend() {
         if (!text.trim() || !profile) return;
+        if (sendingRef.current) return; // prevent double-clicks
+        sendingRef.current = true;
         const content = text.trim();
         const mod = await moderateText(content);
         if (!mod.ok) {
@@ -194,10 +224,24 @@ export default function ChatPage() {
                 return;
             }
             toast.error(`Message blocked. Strikes: ${res.strikes}/3`);
+            sendingRef.current = false;
             return;
         }
-        await sendMessage(roomId as string, profile.handle, content);
-        setText('');
+        try {
+            await sendMessage(roomId as string, profile.handle, content);
+            setText('');
+        } catch (e) {
+            // If initial send fails (e.g., transient disconnect), retry once after a short delay
+            await new Promise((r) => setTimeout(r, 500));
+            try {
+                await sendMessage(roomId as string, profile.handle, content);
+                setText('');
+            } catch (err) {
+                toast.error('Failed to send message. Please try again.');
+            }
+        } finally {
+            sendingRef.current = false;
+        }
     }
 
     async function handlePickImage() {
@@ -398,7 +442,9 @@ export default function ChatPage() {
         if (
             exportState.approvals.size >= 2 &&
             !exporting &&
-            lastDownloadedReqId.current !== exportState.reqId
+            lastDownloadedReqId.current !== exportState.reqId &&
+            // Only the requester should receive the export
+            profile.handle === exportState.requestedBy
         ) {
             setExporting(true);
             lastDownloadedReqId.current = exportState.reqId;
@@ -433,7 +479,9 @@ export default function ChatPage() {
         if (
             exportTxtState.approvals.size >= 2 &&
             !exporting &&
-            lastDownloadedReqId.current !== `txt:${exportTxtState.reqId}`
+            lastDownloadedReqId.current !== `txt:${exportTxtState.reqId}` &&
+            // Only the requester should receive the export
+            profile.handle === exportTxtState.requestedBy
         ) {
             setExporting(true);
             lastDownloadedReqId.current = `txt:${exportTxtState.reqId}`;
@@ -497,8 +545,10 @@ export default function ChatPage() {
                                     clearInterval(inactivityTimerRef.current);
                                     inactivityTimerRef.current = null;
                                 }
-                                await deleteAllSessionMessages(roomId as string);
+                                // Delete the session first so the other participant is kicked out immediately
                                 await deleteSession(roomId as string);
+                                // Then perform best-effort cleanup of messages
+                                await deleteAllSessionMessages(roomId as string);
                                 toast.success('Session deleted');
                                 router.replace('/dashboard');
                             }}
