@@ -203,7 +203,7 @@ export default function ChatPage() {
             return;
         }
         try {
-            const success = await sendMessage(profile.handle, content);
+            const success = await sendMessage(roomId as string, profile.handle, content);
             if (success) {
                 setText('');
             } else {
@@ -273,7 +273,7 @@ export default function ChatPage() {
             }
             // encode as control message to avoid schema changes
             const payload = `__image__|${encodeURIComponent(url)}|${fileId}|${encodeURIComponent(f.name)}`;
-            const success = await sendMessage(profile.handle, payload);
+            const success = await sendMessage(roomId as string, profile.handle, payload);
             if (!success) {
                 toast.error('Failed to send image message');
             }
@@ -392,33 +392,33 @@ export default function ChatPage() {
     async function requestExport() {
         if (!profile) return;
         const reqId = Math.random().toString(36).slice(2, 10);
-        await sendMessage(profile.handle, EXPORT_REQ + reqId);
+        await sendMessage(roomId as string, profile.handle, EXPORT_REQ + reqId);
     }
 
     async function approveExport() {
         if (!profile || !exportState.reqId) return;
-        await sendMessage(profile.handle, EXPORT_APPROVE + exportState.reqId);
+        await sendMessage(roomId as string, profile.handle, EXPORT_APPROVE + exportState.reqId);
     }
 
     async function cancelExport() {
         if (!profile || !exportState.reqId) return;
-        await sendMessage(profile.handle, EXPORT_CANCEL + exportState.reqId);
+        await sendMessage(roomId as string, profile.handle, EXPORT_CANCEL + exportState.reqId);
     }
 
     async function requestExportTxt() {
         if (!profile) return;
         const reqId = Math.random().toString(36).slice(2, 10);
-        await sendMessage(profile.handle, EXPORT_TXT_REQ + reqId);
+        await sendMessage(roomId as string, profile.handle, EXPORT_TXT_REQ + reqId);
     }
 
     async function approveExportTxt() {
         if (!profile || !exportTxtState.reqId) return;
-        await sendMessage(profile.handle, EXPORT_TXT_APPROVE + exportTxtState.reqId);
+        await sendMessage(roomId as string, profile.handle, EXPORT_TXT_APPROVE + exportTxtState.reqId);
     }
 
     async function cancelExportTxt() {
         if (!profile || !exportTxtState.reqId) return;
-        await sendMessage(profile.handle, EXPORT_TXT_CANCEL + exportTxtState.reqId);
+        await sendMessage(roomId as string, profile.handle, EXPORT_TXT_CANCEL + exportTxtState.reqId);
     }
 
     useEffect(() => {
@@ -507,14 +507,7 @@ export default function ChatPage() {
                         </div>
                         <div>
                             <h1 className="font-semibold leading-none">Chat</h1>
-                            <p className="text-[10px] text-[var(--muted-foreground)]">
-                                Ephemeral • Private
-                                {isConnected ? (
-                                    <span className="text-green-600 dark:text-green-400 ml-1">• Connected</span>
-                                ) : (
-                                    <span className="text-red-600 dark:text-red-400 ml-1">• Connecting...</span>
-                                )}
-                            </p>
+                            <p className="text-[10px] text-[var(--muted-foreground)]">Ephemeral • Private</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
