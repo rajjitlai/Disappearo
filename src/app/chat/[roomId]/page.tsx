@@ -3,30 +3,11 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAuth } from '@/app/state/AuthContext';
 import { useParams, useRouter } from 'next/navigation';
-import { client, ids, getOrCreateProfile, getCurrentUser, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike, deleteImageFile } from '@/app/lib/appwrite';
+import { client, ids, getOrCreateProfile, getCurrentUser, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike, deleteImageFile, listMessages } from '@/app/lib/appwrite';
 import { useRealtimeChat } from '@/app/hooks/useRealtimeChat';
 import toast from 'react-hot-toast';
 import Image from 'next/image';
-
-type Profile = {
-    $id: string;
-    handle: string;
-    userId: string;
-    strikes?: number;
-    banned?: boolean;
-    [key: string]: unknown;
-};
-
-
-
-type Message = {
-    $id: string;
-    $createdAt: string;
-    sender: string;
-    text: string;
-    sessionId: string;
-    [key: string]: unknown;
-};
+import { Message, Profile } from '@/app/lib/types';
 
 type ModerateResponse = {
     ok: boolean;
@@ -51,6 +32,7 @@ export default function ChatPage() {
     const [uploadingImageName, setUploadingImageName] = useState<string | null>(null);
     const sendingRef = useRef(false);
     const lastDownloadedReqId = useRef<string | null>(null);
+    const unsubRef = useRef<(() => void) | null>(null);
 
     // Use Socket.io for real-time messaging
     const { messages, sendMessage, isConnected, isLoading } = useRealtimeChat(roomId as string);
@@ -101,6 +83,7 @@ export default function ChatPage() {
                 router.replace('/dashboard');
             }
         });
+        unsubRef.current = unsubscribe;
         return () => {
             try { unsubscribe(); } catch { }
         };
@@ -371,33 +354,33 @@ export default function ChatPage() {
     async function requestExport() {
         if (!profile) return;
         const reqId = Math.random().toString(36).slice(2, 10);
-        await sendMessage(roomId as string, profile.handle, EXPORT_REQ + reqId);
+        await sendMessage(profile.handle, EXPORT_REQ + reqId);
     }
 
     async function approveExport() {
         if (!profile || !exportState.reqId) return;
-        await sendMessage(roomId as string, profile.handle, EXPORT_APPROVE + exportState.reqId);
+        await sendMessage(profile.handle, EXPORT_APPROVE + exportState.reqId);
     }
 
     async function cancelExport() {
         if (!profile || !exportState.reqId) return;
-        await sendMessage(roomId as string, profile.handle, EXPORT_CANCEL + exportState.reqId);
+        await sendMessage(profile.handle, EXPORT_CANCEL + exportState.reqId);
     }
 
     async function requestExportTxt() {
         if (!profile) return;
         const reqId = Math.random().toString(36).slice(2, 10);
-        await sendMessage(roomId as string, profile.handle, EXPORT_TXT_REQ + reqId);
+        await sendMessage(profile.handle, EXPORT_TXT_REQ + reqId);
     }
 
     async function approveExportTxt() {
         if (!profile || !exportTxtState.reqId) return;
-        await sendMessage(roomId as string, profile.handle, EXPORT_TXT_APPROVE + exportTxtState.reqId);
+        await sendMessage(profile.handle, EXPORT_TXT_APPROVE + exportTxtState.reqId);
     }
 
     async function cancelExportTxt() {
         if (!profile || !exportTxtState.reqId) return;
-        await sendMessage(roomId as string, profile.handle, EXPORT_TXT_CANCEL + exportTxtState.reqId);
+        await sendMessage(profile.handle, EXPORT_TXT_CANCEL + exportTxtState.reqId);
     }
 
     useEffect(() => {

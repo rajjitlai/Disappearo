@@ -91,7 +91,7 @@ export function useRealtimeChat(roomId: string) {
             });
 
             // Add to local state immediately for better UX
-            setMessages(prev => [...prev, message].sort((a, b) =>
+            setMessages(prev => [...prev, message as unknown as Message].sort((a, b) =>
                 new Date(a.$createdAt).getTime() - new Date(b.$createdAt).getTime()
             ));
 
