@@ -3,8 +3,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAuth } from '@/app/state/AuthContext';
 import { useParams, useRouter } from 'next/navigation';
-import { client, ids, getOrCreateProfile, getCurrentUser, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike, deleteImageFile, listMessages } from '@/app/lib/appwrite';
-import { useRealtimeChat } from '@/app/hooks/useRealtimeChat';
+import { client, ids, getOrCreateProfile, getCurrentUser, sendMessage, listMessages, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike, deleteImageFile } from '@/app/lib/appwrite';
 import toast from 'react-hot-toast';
 import Image from 'next/image';
 import { Message, Profile } from '@/app/lib/types';
@@ -18,6 +17,7 @@ export default function ChatPage() {
     const { loading: authLoading } = useAuth();
     const { roomId } = useParams();
     const [profile, setProfile] = useState<Profile | null>(null);
+    const [messages, setMessages] = useState<Message[]>([]);
     const [text, setText] = useState('');
     const [showEmoji, setShowEmoji] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -33,9 +33,6 @@ export default function ChatPage() {
     const sendingRef = useRef(false);
     const lastDownloadedReqId = useRef<string | null>(null);
     const unsubRef = useRef<(() => void) | null>(null);
-
-    // Use Socket.io for real-time messaging
-    const { messages, sendMessage, isConnected, isLoading } = useRealtimeChat(roomId as string);
 
     // load user + profile
     useEffect(() => {
@@ -59,9 +56,50 @@ export default function ChatPage() {
         })();
     }, [authLoading, router]);
 
-    // Messages are now handled by useRealtimeChat hook
+    // load initial messages and subscribe via Appwrite Realtime
+    useEffect(() => {
+        if (!roomId) return;
+        (async () => {
+            try {
+                const res = await listMessages(roomId as string);
+                const docs = (res as { documents: unknown[] }).documents ?? res;
+                const uniq = new Map<string, Message>();
+                for (const d of docs) {
+                    const message = d as Message;
+                    uniq.set(message.$id, message);
+                }
+                const arr = Array.from(uniq.values()).sort((a, b) =>
+                    new Date(a.$createdAt).getTime() - new Date(b.$createdAt).getTime()
+                );
+                setMessages(arr);
+            } catch {
+                // ignore initial load errors
+            }
+        })();
 
-    // Realtime messaging is now handled by Socket.io in useRealtimeChat hook
+        const unsubscribe = client.subscribe(
+            `databases.${ids.db}.collections.${ids.messages}.documents`,
+            (res) => {
+                const doc: Message = res.payload as unknown as Message;
+                if (doc.sessionId !== roomId) return;
+                const isCreate = res.events.some((e: string) => e.endsWith('.create'));
+                const isDelete = res.events.some((e: string) => e.endsWith('.delete'));
+                const isUpdate = res.events.some((e: string) => e.endsWith('.update'));
+                setMessages((prev) => {
+                    if (isDelete) return prev.filter((m) => m.$id !== doc.$id);
+                    if (isUpdate) return prev.map((m) => (m.$id === doc.$id ? doc : m));
+                    if (isCreate) {
+                        if (prev.some((m) => m.$id === doc.$id)) return prev;
+                        return [...prev, doc].sort((a, b) => new Date(a.$createdAt).getTime() - new Date(b.$createdAt).getTime());
+                    }
+                    return prev;
+                });
+            }
+        );
+        return () => {
+            try { unsubscribe(); } catch { }
+        };
+    }, [roomId]);
 
     // subscribe to session lifecycle; if session is deleted by the other participant, exit cleanly
     useEffect(() => {
