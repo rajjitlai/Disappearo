@@ -66,7 +66,7 @@ export default function PrivacyPage() {
                         <ul className="space-y-2 text-[var(--muted-foreground)]">
                             <li className="flex items-start gap-2">
                                 <span className="text-blue-600 dark:text-blue-400 mt-1">•</span>
-                                <span>Text content is analyzed using Hugging Face AI models for inappropriate content</span>
+                                <span>Text content is analyzed using OpenModerator AI models for inappropriate content</span>
                             </li>
                             <li className="flex items-start gap-2">
                                 <span className="text-blue-600 dark:text-blue-400 mt-1">•</span>
@@ -134,7 +134,7 @@ export default function PrivacyPage() {
                             </li>
                             <li className="flex items-start gap-2">
                                 <span className="text-blue-600 dark:text-blue-400 mt-1">•</span>
-                                <span><strong>Hugging Face:</strong> AI content moderation (text and image analysis)</span>
+                                <span><strong>OpenModerator:</strong> AI content moderation (text and image analysis)</span>
                             </li>
                         </ul>
                         <p className="text-[var(--muted-foreground)] text-sm">

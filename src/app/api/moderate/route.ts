@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Filter } from 'content-checker';
 
 // Simple in-memory rate limiter per IP
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1m
@@ -16,77 +17,77 @@ function rateLimit(ip: string) {
     return { ok: true };
 }
 
-// Text moderation: Hugging Face only
-
 type Body =
     | { type: 'text'; content: string }
     | { type: 'image'; url: string };
 
-type HFResponse = Array<{ label: string; score: number }> | { [key: string]: unknown };
-
-async function hfRequest(model: string, payload: Record<string, unknown>) {
-    const token = process.env.HUGGINGFACE_API_TOKEN;
-    if (!token) throw new Error('HUGGINGFACE_API_TOKEN not set');
-    const timeoutMs = Number(process.env.HUGGINGFACE_TIMEOUT_MS || 7000);
-    const retries = Math.max(0, Number(process.env.HUGGINGFACE_RETRIES || 2));
-
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-        try {
-            const res = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: ctrl.signal,
-            });
-            clearTimeout(timer);
-            if (!res.ok) throw new Error(`HF error ${res.status}`);
-            return (await res.json()) as HFResponse;
-        } catch (err) {
-            clearTimeout(timer);
-            if (attempt === retries) throw err;
-            await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
-        }
+// Initialize content-checker filter
+function getContentFilter() {
+    const apiKey = process.env.OPENMODERATOR_API_KEY;
+    if (!apiKey) {
+        console.warn('OPENMODERATOR_API_KEY not set, using fallback moderation only');
+        return new Filter();
     }
-    throw new Error('HF request failed');
+    return new Filter({ openModeratorAPIKey: apiKey });
 }
 
-async function moderateTextHF(text: string) {
-    const data = await hfRequest('unitary/unbiased-toxic-roberta', { inputs: text });
-    let items: Array<{ label?: string; score?: number }> = [];
-    if (Array.isArray(data)) {
-        const first = (data as Array<unknown>)[0];
-        if (Array.isArray(first)) {
-            items = first as Array<{ label?: string; score?: number }>;
-        } else {
-            items = data as Array<{ label?: string; score?: number }>;
-        }
+// AI-powered text moderation using content-checker
+async function moderateTextAI(text: string) {
+    const filter = getContentFilter();
+
+    try {
+        const response = await filter.isProfaneAI(text, {
+            checkManualProfanityList: false, // Skip manual list for better performance
+            provider: "google-perspective-api" // Use Google's Perspective API
+        });
+
+        return {
+            blocked: response.profane,
+            reason: response.profane ? 'ai_moderation' : 'passed',
+            score: {
+                profane: response.profane,
+                types: response.type,
+                toxicity: response.type.includes('TOXICITY') ? 1 : 0,
+                severe_toxicity: response.type.includes('SEVERE_TOXICITY') ? 1 : 0,
+                harassment: response.type.includes('HARASSMENT') ? 1 : 0,
+                hate: response.type.includes('HATE') ? 1 : 0
+            }
+        };
+    } catch (error) {
+        console.error('AI text moderation failed:', error);
+        throw error;
     }
-    const find = (label: string) => {
-        const it = items.find((x: { label?: string; score?: number }) => (x.label || '').toLowerCase().includes(label));
-        return Number(it?.score ?? 0);
-    };
-    const toxicity = Math.max(find('toxic'), find('severe_toxic'), find('insult'));
-    const hate = Math.max(find('identity_hate'), find('threat'));
-    const blocked = toxicity >= 0.8 || hate >= 0.7;
-    return { blocked, score: { toxicity, hate } };
 }
 
-// Image moderation via HF NSFW detector
-async function moderateImageHF(url: string) {
-    const data = await hfRequest('Falconsai/nsfw_image_detection', { inputs: url });
-    const items: Array<{ label?: string; score?: number } | [string, number]> = Array.isArray(data)
-        ? (data as Array<{ label?: string; score?: number } | [string, number]>)
-        : ((data as unknown as Array<{ label?: string; score?: number } | [string, number]>) || []);
-    let nsfw = 0;
-    for (const it of items) {
-        const label = (Array.isArray(it) ? it[0] : it.label)?.toString().toLowerCase();
-        const score = Number(Array.isArray(it) ? it[1] : it.score || 0);
-        if (label?.includes('nsfw') || label?.includes('porn')) nsfw = Math.max(nsfw, score);
+// AI-powered image moderation using content-checker
+async function moderateImageAI(imageUrl: string) {
+    const filter = getContentFilter();
+
+    try {
+        // Fetch the image from URL
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch image: ${response.status}`);
+        }
+
+        const imageBuffer = await response.arrayBuffer();
+        const imageFile = new File([imageBuffer], 'image.jpg', { type: 'image/jpeg' });
+
+        const moderationResponse = await filter.isImageNSFW(imageFile);
+
+        return {
+            blocked: moderationResponse.nsfw,
+            reason: moderationResponse.nsfw ? 'ai_moderation' : 'passed',
+            score: {
+                nsfw: moderationResponse.nsfw,
+                types: moderationResponse.types,
+                sexual: moderationResponse.types.includes('Porn') || moderationResponse.types.includes('Hentai') ? 1 : 0
+            }
+        };
+    } catch (error) {
+        console.error('AI image moderation failed:', error);
+        throw error;
     }
-    const blocked = nsfw >= 0.8;
-    return { blocked, score: { nsfw } };
 }
 
 // Fallback image moderation - basic file type and size checks
@@ -108,28 +109,28 @@ async function moderateImageFallback(url: string) {
         };
     } catch (error) {
         // If fallback fails, allow the image
+        console.error('Image fallback moderation failed:', error);
         return { blocked: false, reason: 'fallback_failed', score: { error: 'image_fallback_failed' } };
     }
 }
 
 async function moderateImage(url: string) {
-    // Use fallback immediately for better performance
-    // Only use HF if explicitly enabled and token is available
-    const useHF = process.env.USE_HUGGINGFACE_MODERATION === 'true' && process.env.HUGGINGFACE_API_TOKEN;
-    
-    if (useHF) {
+    // Use AI moderation if enabled and API key is available
+    const useAI = process.env.USE_OPENMODERATOR_MODERATION === 'true' && process.env.OPENMODERATOR_API_KEY;
+
+    if (useAI) {
         try {
-            const ai = await moderateImageHF(url);
+            const ai = await moderateImageAI(url);
             return {
                 blocked: ai.blocked,
-                reason: ai.blocked ? 'ai_moderation' : 'passed',
+                reason: ai.reason,
                 score: ai.score,
             };
         } catch (error) {
-            console.log('HuggingFace image moderation failed, using fallback');
+            console.log('AI image moderation failed, using fallback:', error);
         }
     }
-    
+
     // Use fast fallback moderation
     return await moderateImageFallback(url);
 }
@@ -162,28 +163,28 @@ async function moderateTextFallback(text: string) {
         };
     } catch (error) {
         // If fallback fails, allow the message
+        console.error('Text fallback moderation failed:', error);
         return { blocked: false, reason: 'fallback_failed', score: { error: 'fallback_failed' } };
     }
 }
 
 async function moderateText(text: string) {
-    // Use fallback immediately for better performance
-    // Only use HF if explicitly enabled and token is available
-    const useHF = process.env.USE_HUGGINGFACE_MODERATION === 'true' && process.env.HUGGINGFACE_API_TOKEN;
-    
-    if (useHF) {
+    // Use AI moderation if enabled and API key is available
+    const useAI = process.env.USE_OPENMODERATOR_MODERATION === 'true' && process.env.OPENMODERATOR_API_KEY;
+
+    if (useAI) {
         try {
-            const aiCheck = await moderateTextHF(text);
+            const aiCheck = await moderateTextAI(text);
             return {
                 blocked: aiCheck.blocked,
-                reason: aiCheck.blocked ? 'ai_moderation' : 'passed',
+                reason: aiCheck.reason,
                 score: aiCheck.score
             };
         } catch (error) {
-            console.log('HuggingFace API failed, using fallback moderation');
+            console.log('AI text moderation failed, using fallback moderation:', error);
         }
     }
-    
+
     // Use fast fallback moderation
     return await moderateTextFallback(text);
 }
@@ -219,16 +220,20 @@ export async function POST(req: NextRequest) {
 
 // GET endpoint for testing and debugging
 export async function GET() {
-    const hasToken = !!process.env.HUGGINGFACE_API_TOKEN;
+    const hasToken = !!process.env.OPENMODERATOR_API_KEY;
     const imageModDisabled = process.env.DISABLE_IMAGE_MODERATION === 'true';
+    const useAI = process.env.USE_OPENMODERATOR_MODERATION === 'true';
 
     return NextResponse.json({
         status: 'ok',
-        hasHuggingFaceToken: hasToken,
+        hasOpenModeratorToken: hasToken,
+        aiModerationEnabled: useAI,
         imageModerationDisabled: imageModDisabled,
-        message: hasToken
-            ? 'Moderation API is configured'
-            : 'HUGGINGFACE_API_TOKEN not set - moderation will fail open',
+        message: hasToken && useAI
+            ? 'Moderation API is configured with content-checker (OpenModerator)'
+            : hasToken
+                ? 'OPENMODERATOR_API_KEY set but USE_OPENMODERATOR_MODERATION is false'
+                : 'OPENMODERATOR_API_KEY not set - using fallback moderation only',
         timestamp: new Date().toISOString()
     });
 }

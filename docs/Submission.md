@@ -27,7 +27,7 @@ People increasingly need private spaces for short‑lived conversations without 
 - Framework: Next.js 15 (App Router), React 19, TypeScript
 - UI: Tailwind CSS v4, CSS variables (theming), Next/Image
 - Backend (BaaS): Appwrite (Auth, Database, Realtime, Storage)
-- AI Moderation: Hugging Face Inference API (toxicity + NSFW)
+- AI Moderation: OpenModerator API (toxicity + NSFW)
 - Tooling: ESLint 9, React Hot Toast
 - Hosting: Appwrite Sites (standalone build)
 

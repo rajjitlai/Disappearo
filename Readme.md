@@ -54,7 +54,7 @@
 ### Privacy & Security
 
 - **No Data Persistence**: Conversations are truly temporary
-- **AI-Powered Moderation**: Hugging Face integration for content safety
+- **AI-Powered Moderation**: OpenModerator integration for content safety
 - **Strike System**: Progressive enforcement (3 strikes = temporary ban)
 - **Auto-Unban**: 10-minute temporary bans with automatic restoration
 - **Security Headers**: Comprehensive CSP and security policies
@@ -85,7 +85,7 @@
 - **Appwrite Realtime**: Live messaging and real-time updates
 - **Appwrite Storage**: Secure file uploads and image sharing
 - **Appwrite Auth**: Magic link authentication system
-- **Hugging Face AI**: Content moderation and safety filtering
+- **content-checker**: OpenModerator's TypeScript package for AI content moderation
 
 ### Security & Performance
 
@@ -101,7 +101,7 @@
 
 - Node.js 18+
 - Appwrite Cloud account
-- Hugging Face API token (for moderation)
+- OpenModerator API key (get free at <https://www.openmoderator.com>)
 
 ### Installation
 
@@ -134,8 +134,10 @@ NEXT_PUBLIC_APPWRITE_BUCKET_ID=your_storage_bucket_id
 NEXT_PUBLIC_APPWRITE_BAD_WORDS_COLLECTION_ID=your_bad_words_collection_id
 NEXT_PUBLIC_APPWRITE_CONTACT_COLLECTION_ID=your_contact_collection_id
 
-# AI Moderation
-HUGGINGFACE_API_TOKEN=your_huggingface_token
+# OpenModerator AI Moderation via content-checker package
+# Get your free API key at https://www.openmoderator.com
+OPENMODERATOR_API_KEY=your_openmoderator_api_key
+USE_OPENMODERATOR_MODERATION=true
 
 # Optional: Disable image moderation for development
 DISABLE_IMAGE_MODERATION=false
@@ -286,7 +288,7 @@ Disappearo features a sophisticated theming system with:
 ### AI Moderation
 
 - Custom bad words filtering
-- Hugging Face toxicity detection
+- content-checker package with Google's Perspective API
 - Image NSFW detection
 - Progressive enforcement system
 

@@ -44,7 +44,7 @@ export default function AboutPage() {
                         <div className="space-y-2">
                             <h3 className="font-medium text-[var(--foreground)]">4. AI-Powered Safety</h3>
                             <p className="text-sm text-[var(--muted-foreground)]">
-                                Content moderation using Hugging Face AI with strike system
+                                Content moderation using OpenModerator AI with strike system
                             </p>
                         </div>
                     </div>

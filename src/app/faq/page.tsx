@@ -73,7 +73,7 @@ const faqData: FAQItem[] = [
     // Content Moderation
     {
         question: "How does AI content moderation work?",
-        answer: "We use Hugging Face AI models to automatically scan text and images for inappropriate content. This helps maintain safe spaces and ensures all users can enjoy a positive experience.",
+        answer: "We use OpenModerator AI models to automatically scan text and images for inappropriate content. This helps maintain safe spaces and ensures all users can enjoy a positive experience.",
         category: "moderation"
     },
     {
@@ -168,8 +168,8 @@ export default function FAQPage() {
                             key={category.id}
                             onClick={() => setSelectedCategory(category.id)}
                             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${selectedCategory === category.id
-                                    ? 'bg-blue-600 text-white'
-                                    : 'bg-[var(--card-background)] text-[var(--foreground)] border border-[var(--border)] hover:bg-[var(--muted)]'
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-[var(--card-background)] text-[var(--foreground)] border border-[var(--border)] hover:bg-[var(--muted)]'
                                 }`}
                         >
                             {category.name} ({category.count})

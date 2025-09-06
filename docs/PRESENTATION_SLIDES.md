@@ -50,7 +50,7 @@ Repo: <https://github.com/rajjitlai/Disappearo>
 
 - **Ephemeral Messaging**: 5-minute auto-deletion
 - **Magic Link Auth**: Passwordless, secure login
-- **AI Moderation**: Hugging Face-powered safety
+- **AI Moderation**: OpenModerator-powered safety
 - **Dual-Approval Exports**: Both users must consent
 - **Real-time Chat**: Instant messaging experience
 
@@ -79,7 +79,7 @@ Repo: <https://github.com/rajjitlai/Disappearo>
 - **Appwrite Cloud**: Complete BaaS solution
 - **Appwrite Realtime**: Live messaging
 - **Appwrite Storage**: Secure file uploads
-- **Hugging Face AI**: Content moderation
+- **OpenModerator AI**: Content moderation
 
 ### Security
 
@@ -118,7 +118,7 @@ Repo: <https://github.com/rajjitlai/Disappearo>
 ### Moderation System
 
 - **Custom Bad Words**: Configurable word filtering
-- **AI Detection**: Hugging Face toxicity models
+- **AI Detection**: OpenModerator toxicity models
 - **Image Safety**: NSFW content detection
 - **Strike System**: 3 strikes = temporary ban
 
@@ -312,6 +312,7 @@ src/
 - **Image Optimization**: Next.js image component
 - **Code Splitting**: Automatic bundle optimization
 a
+
 ### Appwrite Benefits
 
 - **Global CDN**: Fast worldwide delivery
