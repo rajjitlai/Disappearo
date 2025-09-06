@@ -64,13 +64,70 @@ async function moderateImageAI(imageUrl: string) {
     const filter = getContentFilter();
 
     try {
-        // Fetch the image from URL
-        const response = await fetch(imageUrl);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch image: ${response.status}`);
+        // Check if this is an Appwrite Storage URL
+        const isAppwriteUrl = imageUrl.includes(process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || '');
+
+        let imageBuffer: ArrayBuffer;
+
+        if (isAppwriteUrl) {
+            // For Appwrite Storage URLs, try multiple approaches to get the image
+            let publicViewUrl = imageUrl;
+
+            // If it's a download URL, convert to view URL
+            if (imageUrl.includes('/download')) {
+                publicViewUrl = imageUrl.replace('/download', '/view');
+            }
+
+            // Ensure we have the project parameter
+            if (!publicViewUrl.includes('project=')) {
+                const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT;
+                if (projectId) {
+                    publicViewUrl += (publicViewUrl.includes('?') ? '&' : '?') + `project=${projectId}`;
+                }
+            }
+
+            console.log('Attempting to fetch Appwrite image from:', publicViewUrl);
+
+            try {
+                const response = await fetch(publicViewUrl);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                imageBuffer = await response.arrayBuffer();
+            } catch (fetchError) {
+                console.error('Failed to fetch Appwrite image:', fetchError);
+
+                // If the URL doesn't work, try to construct a proper public view URL
+                // Extract file ID from the URL if possible
+                const fileIdMatch = imageUrl.match(/\/files\/([^\/\?]+)/);
+                if (fileIdMatch && process.env.NEXT_PUBLIC_APPWRITE_PROJECT && process.env.NEXT_PUBLIC_APPWRITE_BUCKET_ID) {
+                    const fileId = fileIdMatch[1];
+                    const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT;
+                    const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT;
+                    const bucketId = process.env.NEXT_PUBLIC_APPWRITE_BUCKET_ID;
+
+                    const constructedUrl = `${endpoint}/storage/buckets/${bucketId}/files/${fileId}/view?project=${projectId}`;
+                    console.log('Trying constructed URL:', constructedUrl);
+
+                    const response = await fetch(constructedUrl);
+                    if (!response.ok) {
+                        throw new Error(`Failed with constructed URL: HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    imageBuffer = await response.arrayBuffer();
+                } else {
+                    throw fetchError;
+                }
+            }
+        } else {
+            // For external URLs, fetch directly
+            console.log('Fetching external image from:', imageUrl);
+            const response = await fetch(imageUrl);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch external image: HTTP ${response.status}: ${response.statusText}`);
+            }
+            imageBuffer = await response.arrayBuffer();
         }
 
-        const imageBuffer = await response.arrayBuffer();
         const imageFile = new File([imageBuffer], 'image.jpg', { type: 'image/jpeg' });
 
         const moderationResponse = await filter.isImageNSFW(imageFile);
