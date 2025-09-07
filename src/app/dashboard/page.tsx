@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { getOrCreateProfile, ids, databases, client, clearAllChatRequests, getProfileWithUnbanCheck, deleteAllSessionMessages, deleteSession } from '@/app/lib/appwrite';
+import { getOrCreateProfile, ids, databases, client, clearAllChatRequests, getProfileWithUnbanCheck, deleteAllSessionMessages, deleteSession, uploadImage } from '@/app/lib/appwrite';
 import { useAuth } from '@/app/state/AuthContext';
 import { useRouter } from 'next/navigation';
 import { ID, Query, Models } from 'appwrite';
@@ -37,6 +37,8 @@ export default function DashboardPage() {
     const [banRemainingMs, setBanRemainingMs] = useState<number>(0);
     // suppress auto-navigation when clearing outgoing (realtime may emit 'accepted')
     const suppressNavigateRef = useRef(false);
+    const [testImageFile, setTestImageFile] = useState<File | null>(null);
+    const [testUploading, setTestUploading] = useState(false);
 
     // send a chat request
     async function sendRequest() {
@@ -352,6 +354,24 @@ export default function DashboardPage() {
         }
     }
 
+    // Test image upload function
+    async function testImageUpload() {
+        if (!testImageFile) return;
+
+        setTestUploading(true);
+        try {
+            console.log('Testing image upload with file:', testImageFile);
+            const result = await uploadImage(testImageFile);
+            console.log('Upload result:', result);
+            toast.success(`Test upload successful! File ID: ${result.fileId}`);
+        } catch (error) {
+            console.error('Test upload failed:', error);
+            toast.error(`Test upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setTestUploading(false);
+        }
+    }
+
     // clear all outgoing requests
     async function handleClearAllOutgoing() {
         const ok = window.confirm('Are you sure you want to clear all outgoing requests? This action cannot be undone.');
@@ -561,6 +581,43 @@ export default function DashboardPage() {
                                         <p className="text-green-600 dark:text-green-400 text-xs mt-1">
                                             No violations recorded
                                         </p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Image Upload Test */}
+                    <div className="bg-[var(--card-background)] rounded-2xl p-6 shadow-sm border border-[var(--border)] hover:shadow-md transition-all duration-200">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 bg-purple-100 dark:bg-purple-900/30 rounded-xl flex items-center justify-center">
+                                <svg className="w-6 h-6 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 className="font-semibold text-[var(--foreground)]">Image Upload Test</h3>
+                                <p className="text-sm text-[var(--muted-foreground)]">Test image upload functionality</p>
+                            </div>
+                        </div>
+                        <div className="space-y-3">
+                            <input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => setTestImageFile(e.target.files?.[0] || null)}
+                                className="w-full border border-[var(--border)] py-2 px-3 bg-[var(--input-background)] text-[var(--input-foreground)] rounded-lg"
+                            />
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={testImageUpload}
+                                    disabled={!testImageFile || testUploading}
+                                    className="px-4 py-2 bg-purple-600 dark:bg-purple-700 text-white rounded-lg hover:bg-purple-700 dark:hover:bg-purple-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {testUploading ? 'Testing...' : 'Test Upload'}
+                                </button>
+                                {testImageFile && (
+                                    <div className="text-sm text-[var(--muted-foreground)] flex items-center">
+                                        Selected: {testImageFile.name} ({(testImageFile.size / 1024 / 1024).toFixed(2)} MB)
                                     </div>
                                 )}
                             </div>

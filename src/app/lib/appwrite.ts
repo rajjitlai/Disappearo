@@ -90,18 +90,77 @@ export async function deleteMessage(messageId: string) {
 }
 
 export async function uploadImage(file: File) {
-    // Upload with explicit permissions: any authenticated user can read; owner can write
-    let ownerId: string | null = null;
-    try { const me = await account.get(); ownerId = me.$id; } catch { }
-    const permissions = ownerId
-        ? [Permission.read(Role.users()), Permission.write(Role.user(ownerId))]
-        : [Permission.read(Role.users())];
-    const created = await storage.createFile(ids.bucket, ID.unique(), file, permissions);
     try {
-        const url = storage.getFileView(ids.bucket, created.$id).toString();
-        return { fileId: created.$id, url };
-    } catch {
-        return { fileId: created.$id, url: '' };
+        // Validate file type
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
+        if (!allowedTypes.includes(file.type)) {
+            throw new Error(`Invalid file type: ${file.type}. Allowed types: ${allowedTypes.join(', ')}`);
+        }
+
+        // Check if bucket ID is configured
+        if (!ids.bucket) {
+            throw new Error('Storage bucket ID not configured. Please check your environment variables.');
+        }
+
+        // Upload with explicit permissions: any authenticated user can read; owner can write
+        let ownerId: string | null = null;
+        try {
+            const me = await account.get();
+            ownerId = me.$id;
+            console.log('Current user ID:', ownerId);
+        } catch (error) {
+            console.warn('Could not get current user for permissions:', error);
+        }
+
+        const permissions = ownerId
+            ? [Permission.read(Role.users()), Permission.write(Role.user(ownerId))]
+            : [Permission.read(Role.users())];
+
+        console.log('Uploading file:', {
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            bucket: ids.bucket,
+            permissions: permissions.length
+        });
+
+        const fileId = ID.unique();
+        console.log('Generated file ID:', fileId);
+
+        const created = await storage.createFile(ids.bucket, fileId, file, permissions);
+        console.log('File created successfully:', created.$id);
+
+        try {
+            const url = storage.getFileView(ids.bucket, created.$id).toString();
+            console.log('Generated file URL:', url);
+            return { fileId: created.$id, url };
+        } catch (urlError) {
+            console.error('Failed to generate file URL:', urlError);
+            // Try alternative URL construction
+            try {
+                const altUrl = `${process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT}/storage/buckets/${ids.bucket}/files/${created.$id}/view?project=${process.env.NEXT_PUBLIC_APPWRITE_PROJECT}`;
+                console.log('Trying alternative URL:', altUrl);
+                return { fileId: created.$id, url: altUrl };
+            } catch (altError) {
+                console.error('Alternative URL construction failed:', altError);
+                return { fileId: created.$id, url: '' };
+            }
+        }
+    } catch (error) {
+        console.error('Image upload failed:', error);
+
+        // Provide more specific error messages
+        if (error instanceof Error) {
+            if (error.message.includes('permission')) {
+                throw new Error('Permission denied. Please check your authentication and storage permissions.');
+            } else if (error.message.includes('bucket')) {
+                throw new Error('Storage bucket not found. Please check your bucket configuration.');
+            } else if (error.message.includes('project')) {
+                throw new Error('Appwrite project not found. Please check your project configuration.');
+            }
+        }
+
+        throw error;
     }
 }
 

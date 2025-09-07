@@ -224,31 +224,64 @@ export default function ChatPage() {
     async function handleImageSelected(e: React.ChangeEvent<HTMLInputElement>) {
         const f = e.target.files?.[0];
         if (!f || !profile) return;
+
+        // Validate file type
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
+        if (!allowedTypes.includes(f.type)) {
+            toast.error(`Invalid file type: ${f.type}. Please select an image file.`);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            return;
+        }
+
         const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB
         if (f.size > MAX_IMAGE_BYTES) {
             toast.error('Image is larger than 10MB');
             if (fileInputRef.current) fileInputRef.current.value = '';
             return;
         }
+
         try {
             setUploading(true);
             setUploadingImageName(f.name);
+
+            console.log('Starting image upload:', { name: f.name, size: f.size, type: f.type });
+
             const { url, fileId } = await uploadImage(f);
+
+            if (!fileId) {
+                throw new Error('Failed to upload image - no file ID returned');
+            }
+
+            console.log('Image uploaded successfully:', { fileId, url });
+
             if (url) {
                 // Attempt image moderation
                 try {
+                    console.log('Starting image moderation for URL:', url);
                     const mod = await fetch('/api/moderate', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ type: 'image', url }),
                     });
 
+                    if (!mod.ok) {
+                        throw new Error(`Moderation API returned ${mod.status}: ${mod.statusText}`);
+                    }
+
                     const modResult = await mod.json();
+                    console.log('Moderation result:', modResult);
+
                     if (!modResult.ok) {
                         // If backend failed closed due to AI outage (reason === 'ai_failed'), allow image gracefully
                         if (modResult.reason !== 'ai_failed') {
                             // Block: delete uploaded file to avoid storage of unsafe content
-                            try { await deleteImageFile(fileId); } catch { }
+                            try {
+                                await deleteImageFile(fileId);
+                                console.log('Deleted blocked image file:', fileId);
+                            } catch (deleteError) {
+                                console.error('Failed to delete blocked image:', deleteError);
+                            }
+
                             const res = await incrementStrike(profile.$id);
                             if (res.banned) {
                                 toast.error('Banned due to repeated violations. Your account has been suspended.');
@@ -260,25 +293,36 @@ export default function ChatPage() {
                             }
                             toast.error(`Image blocked. Strikes: ${res.strikes}/3`);
                             return;
+                        } else {
+                            console.log('AI moderation failed, allowing image');
                         }
+                    } else {
+                        console.log('Image passed moderation');
                     }
                 } catch (modError) {
-                    // If moderation completely fails, block image to be safe
+                    // If moderation completely fails, allow image to be safe
                     console.warn('Image moderation failed:', modError);
                     toast('Image uploaded (moderation unavailable)');
                 }
-            }
-            if (!url) {
+            } else {
+                console.warn('No URL generated for uploaded image');
                 toast('Uploaded, but bucket lacks public view permissions');
             }
+
             // encode as control message to avoid schema changes
-            const payload = `__image__|${encodeURIComponent(url)}|${fileId}|${encodeURIComponent(f.name)}`;
+            const payload = `__image__|${encodeURIComponent(url || '')}|${fileId}|${encodeURIComponent(f.name)}`;
+            console.log('Sending image message with payload:', payload);
+
             const success = await sendMessage(roomId as string, profile.handle, payload);
             if (!success) {
                 toast.error('Failed to send image message');
+            } else {
+                console.log('Image message sent successfully');
+                toast.success('Image sent successfully');
             }
         } catch (err: unknown) {
             const error = err as Error;
+            console.error('Image upload error:', error);
             toast.error(error?.message || 'Failed to upload image');
         } finally {
             setUploading(false);
@@ -619,10 +663,21 @@ export default function ChatPage() {
                         const isControl = typeof t === 'string' && t.startsWith('__export_');
                         let imageUrl = '';
                         let imageName = '';
+                        let imageFileId = '';
                         if (isImage) {
                             const parts = t.split('|');
                             imageUrl = decodeURIComponent(parts[1] || '');
+                            imageFileId = parts[2] || '';
                             imageName = decodeURIComponent(parts[3] || 'image');
+
+                            // If URL is empty but we have fileId, try to construct URL
+                            if (!imageUrl && imageFileId) {
+                                try {
+                                    imageUrl = storage.getFileView(ids.bucket, imageFileId).toString();
+                                } catch (urlError) {
+                                    console.warn('Failed to construct image URL from fileId:', urlError);
+                                }
+                            }
                         }
                         const withinEditWindow = mine && ts ? (Date.now() - ts.getTime() <= 5 * 60 * 1000) : false;
                         return (
@@ -639,16 +694,34 @@ export default function ChatPage() {
                                         }`}>
                                         {isImage ? (
                                             <div className="rounded-lg overflow-hidden">
-                                                <Image
-                                                    src={imageUrl}
-                                                    alt={imageName}
-                                                    width={640}
-                                                    height={480}
-                                                    className="block w-full h-auto pointer-events-none select-none"
-                                                    draggable={false}
-                                                    onContextMenu={(ev) => ev.preventDefault()}
-                                                    unoptimized
-                                                />
+                                                {imageUrl ? (
+                                                    <Image
+                                                        src={imageUrl}
+                                                        alt={imageName}
+                                                        width={640}
+                                                        height={480}
+                                                        className="block w-full h-auto pointer-events-none select-none"
+                                                        draggable={false}
+                                                        onContextMenu={(ev) => ev.preventDefault()}
+                                                        onError={(e) => {
+                                                            console.error('Image failed to load:', imageUrl);
+                                                            const target = e.target as HTMLImageElement;
+                                                            target.style.display = 'none';
+                                                            const errorDiv = document.createElement('div');
+                                                            errorDiv.className = 'p-4 text-center text-gray-500 bg-gray-100 dark:bg-gray-800 rounded';
+                                                            errorDiv.textContent = 'Image failed to load';
+                                                            target.parentNode?.appendChild(errorDiv);
+                                                        }}
+                                                        unoptimized
+                                                    />
+                                                ) : (
+                                                    <div className="p-4 text-center text-gray-500 bg-gray-100 dark:bg-gray-800 rounded">
+                                                        <p>Image unavailable</p>
+                                                        {imageFileId && (
+                                                            <p className="text-xs mt-1">File ID: {imageFileId}</p>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                         ) : editingId === msg.$id ? (
                                             <div className="space-y-2">
