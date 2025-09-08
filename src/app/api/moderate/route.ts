@@ -18,12 +18,11 @@ function rateLimit(ip: string) {
 }
 
 type Body =
-    | { type: 'text'; content: string }
-    | { type: 'image'; url: string };
+    | { type: 'text'; content: string };
 
 // Initialize content-checker filter
 function getContentFilter() {
-    const apiKey = process.env.OPENMODERATOR_API_KEY;
+    const apiKey = process.env.OPENMODERATOR_API_KEY || process.env.NEXT_PUBLIC_OPENMODERATOR_API_KEY;
     if (!apiKey) {
         console.warn('OPENMODERATOR_API_KEY not set, using fallback moderation only');
         return new Filter();
@@ -59,138 +58,7 @@ async function moderateTextAI(text: string) {
     }
 }
 
-// AI-powered image moderation using content-checker
-async function moderateImageAI(imageUrl: string) {
-    const filter = getContentFilter();
-
-    try {
-        // Check if this is an Appwrite Storage URL
-        const isAppwriteUrl = imageUrl.includes(process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || '');
-
-        let imageBuffer: ArrayBuffer;
-
-        if (isAppwriteUrl) {
-            // For Appwrite Storage URLs, try multiple approaches to get the image
-            let publicViewUrl = imageUrl;
-
-            // If it's a download URL, convert to view URL
-            if (imageUrl.includes('/download')) {
-                publicViewUrl = imageUrl.replace('/download', '/view');
-            }
-
-            // Ensure we have the project parameter
-            if (!publicViewUrl.includes('project=')) {
-                const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT;
-                if (projectId) {
-                    publicViewUrl += (publicViewUrl.includes('?') ? '&' : '?') + `project=${projectId}`;
-                }
-            }
-
-            console.log('Attempting to fetch Appwrite image from:', publicViewUrl);
-
-            try {
-                const response = await fetch(publicViewUrl);
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                imageBuffer = await response.arrayBuffer();
-            } catch (fetchError) {
-                console.error('Failed to fetch Appwrite image:', fetchError);
-
-                // If the URL doesn't work, try to construct a proper public view URL
-                // Extract file ID from the URL if possible
-                const fileIdMatch = imageUrl.match(/\/files\/([^\/\?]+)/);
-                if (fileIdMatch && process.env.NEXT_PUBLIC_APPWRITE_PROJECT && process.env.NEXT_PUBLIC_APPWRITE_BUCKET_ID) {
-                    const fileId = fileIdMatch[1];
-                    const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT;
-                    const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT;
-                    const bucketId = process.env.NEXT_PUBLIC_APPWRITE_BUCKET_ID;
-
-                    const constructedUrl = `${endpoint}/storage/buckets/${bucketId}/files/${fileId}/view?project=${projectId}`;
-                    console.log('Trying constructed URL:', constructedUrl);
-
-                    const response = await fetch(constructedUrl);
-                    if (!response.ok) {
-                        throw new Error(`Failed with constructed URL: HTTP ${response.status}: ${response.statusText}`);
-                    }
-                    imageBuffer = await response.arrayBuffer();
-                } else {
-                    throw fetchError;
-                }
-            }
-        } else {
-            // For external URLs, fetch directly
-            console.log('Fetching external image from:', imageUrl);
-            const response = await fetch(imageUrl);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch external image: HTTP ${response.status}: ${response.statusText}`);
-            }
-            imageBuffer = await response.arrayBuffer();
-        }
-
-        const imageFile = new File([imageBuffer], 'image.jpg', { type: 'image/jpeg' });
-
-        const moderationResponse = await filter.isImageNSFW(imageFile);
-
-        return {
-            blocked: moderationResponse.nsfw,
-            reason: moderationResponse.nsfw ? 'ai_moderation' : 'passed',
-            score: {
-                nsfw: moderationResponse.nsfw,
-                types: moderationResponse.types,
-                sexual: moderationResponse.types.includes('Porn') || moderationResponse.types.includes('Hentai') ? 1 : 0
-            }
-        };
-    } catch (error) {
-        console.error('AI image moderation failed:', error);
-        throw error;
-    }
-}
-
-// Fallback image moderation - basic file type and size checks
-async function moderateImageFallback(url: string) {
-    try {
-        // Basic checks for common NSFW indicators in URLs
-        const urlLower = url.toLowerCase();
-        const nsfwIndicators = ['porn', 'xxx', 'adult', 'nsfw', 'sex', 'nude', 'naked'];
-        const hasNsfwIndicator = nsfwIndicators.some(indicator => urlLower.includes(indicator));
-
-        // Check file extension
-        const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
-        const hasValidExtension = allowedExtensions.some(ext => urlLower.includes(ext));
-
-        return {
-            blocked: hasNsfwIndicator || !hasValidExtension,
-            reason: hasNsfwIndicator ? 'url_nsfw_indicator' : (!hasValidExtension ? 'invalid_file_type' : 'passed'),
-            score: { nsfw: hasNsfwIndicator ? 1 : 0, validExtension: hasValidExtension }
-        };
-    } catch (error) {
-        // If fallback fails, allow the image
-        console.error('Image fallback moderation failed:', error);
-        return { blocked: false, reason: 'fallback_failed', score: { error: 'image_fallback_failed' } };
-    }
-}
-
-async function moderateImage(url: string) {
-    // Use AI moderation if enabled and API key is available
-    const useAI = process.env.USE_OPENMODERATOR_MODERATION === 'true' && process.env.OPENMODERATOR_API_KEY;
-
-    if (useAI) {
-        try {
-            const ai = await moderateImageAI(url);
-            return {
-                blocked: ai.blocked,
-                reason: ai.reason,
-                score: ai.score,
-            };
-        } catch (error) {
-            console.log('AI image moderation failed, using fallback:', error);
-        }
-    }
-
-    // Use fast fallback moderation
-    return await moderateImageFallback(url);
-}
+// Image moderation removed for now
 
 // Fallback text moderation using bad-words.txt
 async function moderateTextFallback(text: string) {
@@ -260,14 +128,7 @@ export async function POST(req: NextRequest) {
                 score: res.score,
             });
         }
-        if (body.type === 'image') {
-            const res = await moderateImage(body.url);
-            return NextResponse.json({
-                ok: !res.blocked,
-                reason: res.reason,
-                score: res.score
-            });
-        }
+        // Image moderation disabled
         return NextResponse.json({ ok: false, error: 'Unsupported type' }, { status: 400 });
     } catch (e: unknown) {
         const error = e as Error;

@@ -3,10 +3,11 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAuth } from '@/app/state/AuthContext';
 import { useParams, useRouter } from 'next/navigation';
-import { client, ids, getOrCreateProfile, getCurrentUser, sendMessage, listMessages, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike, deleteImageFile } from '@/app/lib/appwrite';
+import { client, ids, getOrCreateProfile, getCurrentUser, sendMessage, listMessages, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike } from '@/app/lib/appwrite';
 import toast from 'react-hot-toast';
 import Image from 'next/image';
 import { Message, Profile } from '@/app/lib/types';
+import { Filter } from 'content-checker';
 
 type ModerateResponse = {
     ok: boolean;
@@ -30,6 +31,16 @@ export default function ChatPage() {
     const [exporting, setExporting] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadingImageName, setUploadingImageName] = useState<string | null>(null);
+    // Initialize client-side content checker
+    const filterRef = useRef<Filter | null>(null);
+    useEffect(() => {
+        const key = process.env.NEXT_PUBLIC_OPENMODERATOR_API_KEY;
+        try {
+            filterRef.current = key ? new Filter({ openModeratorAPIKey: key }) : new Filter();
+        } catch {
+            filterRef.current = new Filter();
+        }
+    }, []);
     const sendingRef = useRef(false);
     const lastDownloadedReqId = useRef<string | null>(null);
     const unsubRef = useRef<(() => void) | null>(null);
@@ -246,6 +257,21 @@ export default function ChatPage() {
 
             console.log('Starting image upload:', { name: f.name, size: f.size, type: f.type });
 
+            // Client-side image moderation before upload
+            try {
+                const filter = filterRef.current || new Filter();
+                const result = await filter.isImageNSFW(f);
+                if (result?.nsfw) {
+                    toast.error(`Image blocked: ${Array.isArray(result.type) ? result.type.join(', ') : 'NSFW'}`);
+                    setUploading(false);
+                    setUploadingImageName(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                    return;
+                }
+            } catch (clientErr) {
+                console.warn('Client-side image moderation failed, proceeding with upload:', clientErr);
+            }
+
             const { url, fileId } = await uploadImage(f);
 
             if (!fileId) {
@@ -254,57 +280,7 @@ export default function ChatPage() {
 
             console.log('Image uploaded successfully:', { fileId, url });
 
-            if (url) {
-                // Attempt image moderation
-                try {
-                    console.log('Starting image moderation for URL:', url);
-                    const mod = await fetch('/api/moderate', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ type: 'image', url }),
-                    });
-
-                    if (!mod.ok) {
-                        throw new Error(`Moderation API returned ${mod.status}: ${mod.statusText}`);
-                    }
-
-                    const modResult = await mod.json();
-                    console.log('Moderation result:', modResult);
-
-                    if (!modResult.ok) {
-                        // If backend failed closed due to AI outage (reason === 'ai_failed'), allow image gracefully
-                        if (modResult.reason !== 'ai_failed') {
-                            // Block: delete uploaded file to avoid storage of unsafe content
-                            try {
-                                await deleteImageFile(fileId);
-                                console.log('Deleted blocked image file:', fileId);
-                            } catch (deleteError) {
-                                console.error('Failed to delete blocked image:', deleteError);
-                            }
-
-                            const res = await incrementStrike(profile.$id);
-                            if (res.banned) {
-                                toast.error('Banned due to repeated violations. Your account has been suspended.');
-                                // Delete current chat and redirect to dashboard
-                                await deleteAllSessionMessages(roomId as string);
-                                await deleteSession(roomId as string);
-                                router.replace('/dashboard');
-                                return;
-                            }
-                            toast.error(`Image blocked. Strikes: ${res.strikes}/3`);
-                            return;
-                        } else {
-                            console.log('AI moderation failed, allowing image');
-                        }
-                    } else {
-                        console.log('Image passed moderation');
-                    }
-                } catch (modError) {
-                    // If moderation completely fails, allow image to be safe
-                    console.warn('Image moderation failed:', modError);
-                    toast('Image uploaded (moderation unavailable)');
-                }
-            } else {
+            if (!url) {
                 console.warn('No URL generated for uploaded image');
                 toast('Uploaded, but bucket lacks public view permissions');
             }
