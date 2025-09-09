@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAuth } from '@/app/state/AuthContext';
 import { useParams, useRouter } from 'next/navigation';
-import { client, ids, getOrCreateProfile, getCurrentUser, sendMessage, listMessages, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike } from '@/app/lib/appwrite';
+import { client, ids, storage, getOrCreateProfile, getCurrentUser, sendMessage, listMessages, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike } from '@/app/lib/appwrite';
 import toast from 'react-hot-toast';
 import Image from 'next/image';
 import { Message, Profile } from '@/app/lib/types';
@@ -262,7 +262,7 @@ export default function ChatPage() {
                 const filter = filterRef.current || new Filter();
                 const result = await filter.isImageNSFW(f);
                 if (result?.nsfw) {
-                    toast.error(`Image blocked: ${Array.isArray(result.type) ? result.type.join(', ') : 'NSFW'}`);
+                    toast.error(`Image blocked: ${Array.isArray(result.types) ? result.types.join(', ') : 'NSFW'}`);
                     setUploading(false);
                     setUploadingImageName(null);
                     if (fileInputRef.current) fileInputRef.current.value = '';
