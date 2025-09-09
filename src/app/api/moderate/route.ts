@@ -123,15 +123,16 @@ async function moderateImageAIFromBase64(fileData: string, fileName: string, fil
         };
     } catch (error) {
         console.error('AI image moderation failed with detailed error:', error);
-        console.error('Error name:', error.name);
-        console.error('Error message:', error.message);
-        console.error('Error stack:', error.stack);
+        const err = error as Error;
+        console.error('Error name:', err.name);
+        console.error('Error message:', err.message);
+        console.error('Error stack:', err.stack);
 
         // Check if it's an API quota/rate limit issue
-        const isAPIError = error.message.includes('HTTP error! status: 500') ||
-            error.message.includes('HTTP error! status: 429') ||
-            error.message.includes('quota') ||
-            error.message.includes('rate limit');
+        const isAPIError = err.message.includes('HTTP error! status: 500') ||
+            err.message.includes('HTTP error! status: 429') ||
+            err.message.includes('quota') ||
+            err.message.includes('rate limit');
 
         if (isAPIError) {
             console.warn('OpenModerator API error detected - likely quota exceeded or service issue');
@@ -142,8 +143,8 @@ async function moderateImageAIFromBase64(fileData: string, fileName: string, fil
                     error: 'api_error',
                     note: 'OpenModerator API error - allowing upload (check API quota)',
                     errorDetails: {
-                        name: error.name,
-                        message: error.message,
+                        name: err.name,
+                        message: err.message,
                         suggestion: 'Check OpenModerator API quota and billing'
                     }
                 }
@@ -158,8 +159,8 @@ async function moderateImageAIFromBase64(fileData: string, fileName: string, fil
                 error: 'moderation_failed',
                 note: 'Image moderation failed, allowing upload',
                 errorDetails: {
-                    name: error.name,
-                    message: error.message
+                    name: err.name,
+                    message: err.message
                 }
             }
         };
@@ -222,15 +223,16 @@ async function moderateImageAI(fileId: string, bucketId: string) {
         };
     } catch (error) {
         console.error('AI image moderation failed with detailed error:', error);
-        console.error('Error name:', error.name);
-        console.error('Error message:', error.message);
-        console.error('Error stack:', error.stack);
+        const err = error as Error;
+        console.error('Error name:', err.name);
+        console.error('Error message:', err.message);
+        console.error('Error stack:', err.stack);
 
         // Check if it's an API quota/rate limit issue
-        const isAPIError = error.message.includes('HTTP error! status: 500') ||
-            error.message.includes('HTTP error! status: 429') ||
-            error.message.includes('quota') ||
-            error.message.includes('rate limit');
+        const isAPIError = err.message.includes('HTTP error! status: 500') ||
+            err.message.includes('HTTP error! status: 429') ||
+            err.message.includes('quota') ||
+            err.message.includes('rate limit');
 
         if (isAPIError) {
             console.warn('OpenModerator API error detected - likely quota exceeded or service issue');
@@ -241,8 +243,8 @@ async function moderateImageAI(fileId: string, bucketId: string) {
                     error: 'api_error',
                     note: 'OpenModerator API error - allowing upload (check API quota)',
                     errorDetails: {
-                        name: error.name,
-                        message: error.message,
+                        name: err.name,
+                        message: err.message,
                         suggestion: 'Check OpenModerator API quota and billing'
                     }
                 }
@@ -257,8 +259,8 @@ async function moderateImageAI(fileId: string, bucketId: string) {
                 error: 'moderation_failed',
                 note: 'Image moderation failed, allowing upload',
                 errorDetails: {
-                    name: error.name,
-                    message: error.message
+                    name: err.name,
+                    message: err.message
                 }
             }
         };
@@ -380,10 +382,11 @@ async function testAPIKey() {
         const result = await filter.isProfaneAI('test message');
         return { success: true, result };
     } catch (error) {
+        const err = error as Error;
         return {
             error: 'API test failed',
-            message: error.message,
-            name: error.name
+            message: err.message,
+            name: err.name
         };
     }
 }
