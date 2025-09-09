@@ -7,7 +7,7 @@ import { client, ids, storage, getOrCreateProfile, getCurrentUser, sendMessage, 
 import toast from 'react-hot-toast';
 import Image from 'next/image';
 import { Message, Profile } from '@/app/lib/types';
-import { Filter } from 'content-checker';
+// import { Filter } from 'content-checker'; // Removed - using server-side moderation
 
 type ModerateResponse = {
     ok: boolean;
@@ -31,16 +31,7 @@ export default function ChatPage() {
     const [exporting, setExporting] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadingImageName, setUploadingImageName] = useState<string | null>(null);
-    // Initialize client-side content checker
-    const filterRef = useRef<Filter | null>(null);
-    useEffect(() => {
-        const key = process.env.NEXT_PUBLIC_OPENMODERATOR_API_KEY;
-        try {
-            filterRef.current = key ? new Filter({ openModeratorAPIKey: key }) : new Filter();
-        } catch {
-            filterRef.current = new Filter();
-        }
-    }, []);
+    // Note: Client-side Filter removed - image moderation now handled server-side
     const sendingRef = useRef(false);
     const lastDownloadedReqId = useRef<string | null>(null);
     const unsubRef = useRef<(() => void) | null>(null);
@@ -82,6 +73,13 @@ export default function ChatPage() {
                 const arr = Array.from(uniq.values()).sort((a, b) =>
                     new Date(a.$createdAt).getTime() - new Date(b.$createdAt).getTime()
                 );
+                console.log('Loaded messages:', arr);
+                // Debug image messages
+                arr.forEach(msg => {
+                    if (msg.text && msg.text.startsWith('__image__|')) {
+                        console.log('Found image message:', msg);
+                    }
+                });
                 setMessages(arr);
             } catch {
                 // ignore initial load errors
@@ -101,6 +99,10 @@ export default function ChatPage() {
                     if (isUpdate) return prev.map((m) => (m.$id === doc.$id ? doc : m));
                     if (isCreate) {
                         if (prev.some((m) => m.$id === doc.$id)) return prev;
+                        console.log('New message received:', doc);
+                        if (doc.text && doc.text.startsWith('__image__|')) {
+                            console.log('New image message received:', doc);
+                        }
                         return [...prev, doc].sort((a, b) => new Date(a.$createdAt).getTime() - new Date(b.$createdAt).getTime());
                     }
                     return prev;
@@ -209,6 +211,8 @@ export default function ChatPage() {
                 router.replace('/dashboard');
                 return;
             }
+            // Update profile state with new strike count
+            setProfile(prev => prev ? { ...prev, strikes: res.strikes } : null);
             toast.error(`Message blocked. Strikes: ${res.strikes}/3`);
             sendingRef.current = false;
             return;
@@ -257,20 +261,9 @@ export default function ChatPage() {
 
             console.log('Starting image upload:', { name: f.name, size: f.size, type: f.type });
 
-            // Client-side image moderation before upload
-            try {
-                const filter = filterRef.current || new Filter();
-                const result = await filter.isImageNSFW(f);
-                if (result?.nsfw) {
-                    toast.error(`Image blocked: ${Array.isArray(result.types) ? result.types.join(', ') : 'NSFW'}`);
-                    setUploading(false);
-                    setUploadingImageName(null);
-                    if (fileInputRef.current) fileInputRef.current.value = '';
-                    return;
-                }
-            } catch (clientErr) {
-                console.warn('Client-side image moderation failed, proceeding with upload:', clientErr);
-            }
+            // Note: Client-side image moderation removed due to CORS issues
+            // Image moderation is now handled server-side after upload
+            console.log('Skipping client-side image moderation (handled server-side)');
 
             const { url, fileId } = await uploadImage(f);
 
@@ -279,6 +272,67 @@ export default function ChatPage() {
             }
 
             console.log('Image uploaded successfully:', { fileId, url });
+
+            // Server-side image moderation after upload
+            try {
+                console.log('Running server-side image moderation...');
+
+                // Convert file to base64 for sending to server
+                const fileData = await new Promise<string>((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result as string);
+                    reader.readAsDataURL(f);
+                });
+
+                const moderationResponse = await fetch('/api/moderate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: 'image',
+                        fileData: fileData,
+                        fileName: f.name,
+                        fileType: f.type
+                    })
+                });
+
+                const moderationResult = await moderationResponse.json();
+                console.log('Server-side moderation result:', moderationResult);
+
+                if (!moderationResult.ok) {
+                    console.log('Image blocked by server-side moderation:', moderationResult);
+
+                    // Increment strike for blocked image
+                    if (profile) {
+                        const res = await incrementStrike(profile.$id);
+                        if (res.banned) {
+                            toast.error('Banned due to repeated violations. Your account has been suspended.');
+                            // Delete current chat and redirect to dashboard
+                            await deleteAllSessionMessages(roomId as string);
+                            await deleteSession(roomId as string);
+                            router.replace('/dashboard');
+                            return;
+                        }
+                        // Update profile state with new strike count
+                        setProfile(prev => prev ? { ...prev, strikes: res.strikes } : null);
+                        toast.error(`Image blocked. Strikes: ${res.strikes}/3`);
+                    } else {
+                        toast.error(`Image blocked by server: ${moderationResult.reason || 'NSFW content detected'}`);
+                    }
+
+                    setUploading(false);
+                    setUploadingImageName(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                    return;
+                } else if (moderationResult.reason === 'api_error') {
+                    console.log('OpenModerator API error detected:', moderationResult);
+                    toast('Image uploaded (moderation API unavailable - check quota)', {
+                        icon: '⚠️',
+                        duration: 4000
+                    });
+                }
+            } catch (serverErr) {
+                console.warn('Server-side image moderation failed, proceeding with message:', serverErr);
+            }
 
             if (!url) {
                 console.warn('No URL generated for uploaded image');
@@ -646,10 +700,19 @@ export default function ChatPage() {
                             imageFileId = parts[2] || '';
                             imageName = decodeURIComponent(parts[3] || 'image');
 
+                            console.log('Image message debug:', {
+                                originalText: t,
+                                parts,
+                                imageUrl,
+                                imageFileId,
+                                imageName
+                            });
+
                             // If URL is empty but we have fileId, try to construct URL
                             if (!imageUrl && imageFileId) {
                                 try {
                                     imageUrl = storage.getFileView(ids.bucket, imageFileId).toString();
+                                    console.log('Constructed image URL from fileId:', imageUrl);
                                 } catch (urlError) {
                                     console.warn('Failed to construct image URL from fileId:', urlError);
                                 }
@@ -679,6 +742,9 @@ export default function ChatPage() {
                                                         className="block w-full h-auto pointer-events-none select-none"
                                                         draggable={false}
                                                         onContextMenu={(ev) => ev.preventDefault()}
+                                                        onLoad={() => {
+                                                            console.log('Image loaded successfully:', imageUrl);
+                                                        }}
                                                         onError={(e) => {
                                                             console.error('Image failed to load:', imageUrl);
                                                             const target = e.target as HTMLImageElement;
@@ -695,6 +761,20 @@ export default function ChatPage() {
                                                         <p>Image unavailable</p>
                                                         {imageFileId && (
                                                             <p className="text-xs mt-1">File ID: {imageFileId}</p>
+                                                        )}
+                                                        <p className="text-xs mt-1">Original URL: {imageUrl || 'Empty'}</p>
+                                                        <p className="text-xs mt-1">Message text: {t}</p>
+                                                        {imageFileId && (
+                                                            <button
+                                                                className="text-xs mt-2 px-2 py-1 bg-blue-500 text-white rounded"
+                                                                onClick={() => {
+                                                                    const testUrl = storage.getFileView(ids.bucket, imageFileId).toString();
+                                                                    console.log('Manual URL test:', testUrl);
+                                                                    window.open(testUrl, '_blank');
+                                                                }}
+                                                            >
+                                                                Test URL
+                                                            </button>
                                                         )}
                                                     </div>
                                                 )}
