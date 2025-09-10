@@ -48,7 +48,7 @@ export default function ContactPage() {
             <div className="max-w-4xl mx-auto p-3 sm:p-6 space-y-6 sm:space-y-8">
                 <div className="text-center space-y-4">
                     <h1 className="text-2xl sm:text-3xl font-bold text-[var(--foreground)]">Contact Us</h1>
-                    <p className="text-gray-600 dark:text-gray-300 mb-6">
+                    <p className="text-lg text-[var(--foreground)] max-w-2xl mx-auto mb-6">
                         Have questions about Disappearo? We&apos;d love to hear from you. Send us a message and we&apos;ll respond as soon as possible.
                     </p>
                 </div>
@@ -138,7 +138,7 @@ export default function ContactPage() {
                                 </div>
                                 <div>
                                     <h3 className="font-medium text-[var(--foreground)]">Email Support</h3>
-                                    <p className="text-[var(--muted-foreground)] text-sm">support@disappearo.com</p>
+                                    <p className="text-[var(--muted-foreground)] text-sm">rajjitlai@mail.com</p>
                                     <p className="text-[var(--muted-foreground)] text-xs mt-1">We typically respond within 24 hours</p>
                                 </div>
                             </div>

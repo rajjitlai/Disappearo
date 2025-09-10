@@ -391,7 +391,7 @@ export default function DashboardPage() {
     }
 
     if (loading) return (
-        <div className="min-h-dvh grid place-items-center bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
+        <div className="min-h-dvh grid place-items-center bg-[var(--background)]">
             <div className="text-center space-y-6">
                 <div className="relative">
                     <div className="w-16 h-16 border-4 border-blue-200 dark:border-blue-800 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin mx-auto"></div>
@@ -406,7 +406,7 @@ export default function DashboardPage() {
     );
 
     return (
-        <div className="min-h-dvh bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
+        <div className="min-h-dvh bg-[var(--background)]">
             <div className="max-w-6xl mx-auto p-4 sm:p-6">
                 <header className="mb-8">
                     <div className="bg-[var(--card-background)] rounded-2xl p-6 shadow-sm border border-[var(--border)]">

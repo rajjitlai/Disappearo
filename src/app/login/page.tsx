@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { account } from '@/app/lib/appwrite';
 import { Card, CardContent, CardHeader } from '@/app/components/ui/card';
-import ThemeToggle from '@/app/components/ThemeToggle';
 import { Input } from '@/app/components/ui/input';
 import { Button } from '@/app/components/ui/button';
 import { ID } from 'appwrite';
@@ -44,12 +43,9 @@ export default function LoginPage() {
         <div className="min-h-dvh grid place-items-center p-3 sm:p-6 bg-[var(--background)] text-[var(--foreground)]">
             <Card className="w-full max-w-sm sm:max-w-md">
                 <CardHeader className="pb-4">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h1 className="text-lg sm:text-xl font-semibold">Sign in</h1>
-                            <p className="text-xs sm:text-sm text-[var(--foreground)]/70 mt-1">Secure magic link to your inbox.</p>
-                        </div>
-                        <ThemeToggle />
+                    <div>
+                        <h1 className="text-lg sm:text-xl font-semibold">Sign in</h1>
+                        <p className="text-xs sm:text-sm text-[var(--foreground)]/70 mt-1">Secure magic link to your inbox.</p>
                     </div>
                 </CardHeader>
                 <CardContent>
