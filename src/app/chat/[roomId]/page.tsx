@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAuth } from '@/app/state/AuthContext';
 import { useParams, useRouter } from 'next/navigation';
-import { client, ids, storage, getOrCreateProfile, getCurrentUser, sendMessage, listMessages, deleteAllSessionMessages, deleteSession, uploadImage, updateMessage, incrementStrike } from '@/app/lib/appwrite';
+import { client, ids, storage, getOrCreateProfile, getCurrentUser, sendMessage, listMessages, deleteAllSessionMessages, deleteSession, uploadImage, incrementStrike } from '@/app/lib/appwrite';
 import toast from 'react-hot-toast';
 import Image from 'next/image';
 import { Message, Profile } from '@/app/lib/types';
@@ -689,7 +689,7 @@ export default function ChatPage() {
                         const mine = msg.sender === profile?.handle;
                         const t: string = msg.text ?? '';
                         const isImage = typeof t === 'string' && t.startsWith('__image__|');
-                        const isControl = typeof t === 'string' && t.startsWith('__export_');
+                        const isControl = false; // editing/export control UI not used here
                         let imageUrl = '';
                         let imageName = '';
                         let imageFileId = '';
@@ -717,7 +717,7 @@ export default function ChatPage() {
                                 }
                             }
                         }
-                        const withinEditWindow = mine && ts ? (Date.now() - ts.getTime() <= 5 * 60 * 1000) : false;
+                        const withinEditWindow = false;
                         return (
                             <div key={msg.$id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
                                 <div className={`flex items-end gap-2 max-w-[80%]`}>

@@ -68,12 +68,13 @@ export default function DashboardPage() {
         try { setOutgoing((prev) => [{ ...doc } as unknown as ChatRequestDoc, ...prev]); } catch { }
 
         // Actionable toast with Cancel button
+        const created = doc as unknown as Models.Document & ChatRequestDoc;
         toast((t) => (
             <div className="flex items-center gap-3">
                 <span>Request sent to {targetId}</span>
                 <button
                     className="px-3 py-1 rounded-md border border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--muted)]"
-                    onClick={async () => { await cancelRequestById((doc as any).$id); toast.dismiss(t.id); }}
+                    onClick={async () => { await cancelRequestById(created.$id); toast.dismiss(t.id); }}
                 >
                     Cancel
                 </button>
