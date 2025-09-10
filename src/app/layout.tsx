@@ -46,7 +46,19 @@ export default function RootLayout({
           <main className="flex-1">
             {children}
           </main>
-          <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              duration: 3000,
+              style: {
+                background: 'var(--card-background)',
+                color: 'var(--foreground)',
+                border: '1px solid var(--border)'
+              },
+              success: { iconTheme: { primary: '#16a34a', secondary: 'white' } },
+              error: { iconTheme: { primary: '#dc2626', secondary: 'white' } }
+            }}
+          />
           <Footer />
         </ClientProviders>
       </body>

@@ -15,7 +15,7 @@ Key capabilities:
 - Magic link auth (passwordless)
 - Image upload with AI moderation and pending/approval flow
 - Dual‑approval chat export (both must consent)
-- Inline message editing (5 minutes, own messages)
+- No message editing (messages are immutable after sending)
 - Strike system with auto‑unban after 10 minutes
 
 ## Inspiration behind the project

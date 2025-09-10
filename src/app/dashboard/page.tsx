@@ -20,7 +20,7 @@ type ChatRequestDoc = {
     $id: string;
     fromId: string;
     toId: string;
-    status: 'pending' | 'accepted' | 'declined' | 'cancelled';
+    status: 'pending' | 'accepted' | 'declined' | 'expired' | 'cancel';
     expiresAt?: string;
 };
 
@@ -39,20 +39,46 @@ export default function DashboardPage() {
     const suppressNavigateRef = useRef(false);
 
 
+    // Helper: cancel a request by id
+    async function cancelRequestById(requestId: string) {
+        try {
+            await databases.updateDocument(ids.db, ids.chatrequests, requestId, { status: 'cancelled' });
+            setOutgoing((prev) => prev.filter((r) => r.$id !== requestId));
+            toast.success('Chat request cancelled');
+        } catch (err) {
+            console.error('Cancel request error:', err);
+            toast.error('Failed to cancel request');
+        }
+    }
+
     // send a chat request
     async function sendRequest() {
         if (!profile) return;
 
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
-        await databases.createDocument(ids.db, ids.chatrequests, ID.unique(), {
+        const doc = await databases.createDocument(ids.db, ids.chatrequests, ID.unique(), {
             fromId: profile.handle,
             toId: targetId.trim(),
             status: 'pending',
             expiresAt, // ⏳ new field
         });
 
-        alert(`Chat request sent to ${targetId}`);
+        // Optimistic add so the Cancel button appears immediately
+        try { setOutgoing((prev) => [{ ...doc } as unknown as ChatRequestDoc, ...prev]); } catch { }
+
+        // Actionable toast with Cancel button
+        toast((t) => (
+            <div className="flex items-center gap-3">
+                <span>Request sent to {targetId}</span>
+                <button
+                    className="px-3 py-1 rounded-md border border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--muted)]"
+                    onClick={async () => { await cancelRequestById((doc as any).$id); toast.dismiss(t.id); }}
+                >
+                    Cancel
+                </button>
+            </div>
+        ), { duration: 6000 });
         setTargetId('');
     }
 
@@ -255,7 +281,12 @@ export default function DashboardPage() {
                     Query.equal('status', 'accepted'),
                 ]),
             ]);
-            setOutgoing([...(pending.documents as unknown as ChatRequestDoc[]), ...(accepted.documents as unknown as ChatRequestDoc[])]);
+            const combined = [
+                ...(pending.documents as unknown as ChatRequestDoc[]),
+                ...(accepted.documents as unknown as ChatRequestDoc[]),
+            ];
+            const uniq = Array.from(new Map(combined.map((d) => [d.$id, d])).values());
+            setOutgoing(uniq);
         };
         load();
     }, [profile]);
@@ -298,7 +329,7 @@ export default function DashboardPage() {
     // cancel an outgoing request
     async function cancelOutgoing(req: ChatRequestDoc) {
         await databases.updateDocument(ids.db, ids.chatrequests, req.$id, {
-            status: 'cancelled',
+            status: 'cancel',
         });
         setOutgoing((prev) => prev.filter((r) => r.$id !== req.$id));
     }
@@ -320,12 +351,17 @@ export default function DashboardPage() {
                 // outgoing updates
                 if (doc.fromId === profile.handle) {
                     setOutgoing((prev) => {
-                        const others = prev.filter((r) => r.$id !== doc.$id);
-                        return [...others, doc];
+                        const map = new Map(prev.map((r) => [r.$id, r]));
+                        map.set(doc.$id, doc);
+                        return Array.from(map.values());
                     });
                     // auto-join when accepted by the other party → request id is session id
                     if (doc.status === 'accepted' && !suppressNavigateRef.current) {
                         router.push(`/chat/${doc.$id}`);
+                    } else if (doc.status === 'declined') {
+                        toast.error(`Your chat request to ${doc.toId} was declined`);
+                    } else if (doc.status === 'cancel') {
+                        toast(`Your chat request to ${doc.toId} was cancelled`);
                     }
                 }
             }
@@ -375,7 +411,7 @@ export default function DashboardPage() {
                 }
                 // Cancel or delete the request itself
                 try {
-                    await databases.updateDocument(ids.db, ids.chatrequests, req.$id, { status: 'cancelled' });
+                    await databases.updateDocument(ids.db, ids.chatrequests, req.$id, { status: 'cancel' });
                 } catch {
                     try { await databases.deleteDocument(ids.db, ids.chatrequests, req.$id); } catch { }
                 }

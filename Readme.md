@@ -47,7 +47,7 @@
 - **Magic Link Authentication**: Secure, passwordless login via Appwrite
 - **Real-time Communication**: Instant messaging with Appwrite Realtime
 - **Dual-Approval Exports**: Both participants must consent to save conversations
-- **Message Editing**: 5-minute edit window for your own messages
+- **No Message Editing**: Messages cannot be edited after sending to preserve moderation integrity
 - **Image Sharing**: Secure image uploads with AI moderation
 - **Responsive Design**: Works perfectly on all devices
 

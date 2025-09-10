@@ -180,7 +180,7 @@ Repo: <https://github.com/rajjitlai/Disappearo>
 1. **Authentication**: Magic link login flow
 2. **Chat Interface**: Real-time messaging
 3. **Image Sharing**: Secure file uploads
-4. **Message Editing**: 5-minute edit window
+4. **No Message Editing**: Messages are immutable after sending (enforced moderation)
 5. **Export System**: Dual-approval saving
 6. **Auto-Deletion**: Inactivity-based cleanup
 

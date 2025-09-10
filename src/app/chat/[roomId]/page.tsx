@@ -21,8 +21,7 @@ export default function ChatPage() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [text, setText] = useState('');
     const [showEmoji, setShowEmoji] = useState(false);
-    const [editingId, setEditingId] = useState<string | null>(null);
-    const [editingText, setEditingText] = useState('');
+    // Editing disabled to avoid bypassing moderation
     const inputRef = useRef<HTMLInputElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -627,9 +626,9 @@ export default function ChatPage() {
                 </div>
             </header>
 
-            {/* Info notice */}
+            {/* Info notice (blend with background) */}
             <div className="max-w-5xl mx-auto px-4 mt-2 text-[10px] sm:text-xs text-[var(--muted-foreground)]">
-                <div className="rounded-lg border border-[var(--border)] bg-[var(--card-background)]/60 px-3 py-2">
+                <div className="px-3 py-2">
                     <span className="font-medium">Privacy notice:</span> Messages are ephemeral and private to participants, and will be cleared when the session exits. AI moderation may delay delivery briefly.
                 </div>
             </div>
@@ -779,40 +778,6 @@ export default function ChatPage() {
                                                     </div>
                                                 )}
                                             </div>
-                                        ) : editingId === msg.$id ? (
-                                            <div className="space-y-2">
-                                                <input
-                                                    className="w-full rounded-md px-2 py-1 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                                    value={editingText}
-                                                    onChange={(e) => setEditingText(e.target.value)}
-                                                />
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        className={`text-[11px] rounded px-2 py-1 ${mine
-                                                            ? 'bg-white/20 text-white hover:bg-white/30'
-                                                            : 'bg-blue-600 text-white hover:bg-blue-700'
-                                                            } transition-colors`}
-                                                        onClick={async () => {
-                                                            const trimmed = editingText.trim();
-                                                            if (!trimmed) { setEditingId(null); return; }
-                                                            await updateMessage(msg.$id, { text: trimmed });
-                                                            setEditingId(null);
-                                                            setEditingText('');
-                                                        }}
-                                                    >
-                                                        Save
-                                                    </button>
-                                                    <button
-                                                        className={`text-[11px] rounded px-2 py-1 ${mine
-                                                            ? 'bg-white/10 text-white hover:bg-white/20'
-                                                            : 'bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-gray-100 hover:bg-gray-400 dark:hover:bg-gray-500'
-                                                            } transition-colors`}
-                                                        onClick={() => { setEditingId(null); setEditingText(''); }}
-                                                    >
-                                                        Cancel
-                                                    </button>
-                                                </div>
-                                            </div>
                                         ) : (
                                             <div className="text-sm whitespace-pre-wrap break-words">{msg.text}</div>
                                         )}
@@ -823,17 +788,7 @@ export default function ChatPage() {
                                             <span className="truncate max-w-[120px]">{msg.sender}</span>
                                             {time && <span aria-hidden>•</span>}
                                             {time && <time dateTime={ts!.toISOString()}>{time}</time>}
-                                            {withinEditWindow && !isImage && !isControl && editingId !== msg.$id && (
-                                                <button
-                                                    className={`ml-2 underline hover:no-underline transition-all ${mine
-                                                        ? 'text-blue-100 hover:text-white'
-                                                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-                                                        }`}
-                                                    onClick={() => { setEditingId(msg.$id); setEditingText(t); }}
-                                                >
-                                                    Edit
-                                                </button>
-                                            )}
+                                            {/* Editing disabled */}
                                         </div>
                                     </div>
                                     {mine && (
